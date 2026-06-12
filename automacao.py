@@ -29,7 +29,9 @@ CONFIG = {
     ),
     "DOMAIN": os.environ.get("WORKSPACE_DOMAIN", "falaw.com.br"),
     "ADMIN_USER": os.environ.get("ADMIN_USER", "samany@falaw.com.br"),
+    "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN", ""),
     "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", ""),
+    "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
     "MAX_EMAILS_PER_RUN": int(os.environ.get("MAX_EMAILS_PER_RUN", "20")),
     "HOURS_LOOKBACK": int(os.environ.get("HOURS_LOOKBACK", "2")),
     "RUN_FOR_ALL_USERS": os.environ.get("RUN_FOR_ALL_USERS", "false").lower() == "true",
@@ -82,6 +84,7 @@ MARCADORES = {
     "Consultivo":      "Falaw/Consultivo",
     "Audiencias":      "Falaw/Audiências",
     "Propaganda":      "Falaw/Propaganda",
+    "Interno":         "Falaw/Interno",
     "OutrosClientes":  "Falaw/Clientes/Outros Clientes",
     "Outro":           "Falaw/Outros",
     "URGENTE":         "Falaw/⚠️ URGENTE",
@@ -264,15 +267,26 @@ def ler_email(service, msg_id: str) -> dict:
 
 
 # ──────────────────────────────────────────────
-# CLASSIFICAÇÃO COM IA (OpenAI — gpt-4o-mini)
+# CLASSIFICAÇÃO COM IA (GitHub Models → OpenAI → Gemini)
 # ──────────────────────────────────────────────
+def _chamar_modelo(client, model: str, prompt: str) -> dict:
+    """Chama um modelo via cliente OpenAI-compatível e retorna JSON."""
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=400,
+        temperature=0.1,
+    )
+    texto = response.choices[0].message.content.strip()
+    texto = texto.replace("```json", "").replace("```", "").strip()
+    return json.loads(texto)
+
+
 def classificar_email(email: dict) -> dict:
     """
-    Envia o email para OpenAI e retorna a classificação.
+    Tenta classificar o email usando GitHub Models, OpenAI e Gemini como fallback.
     """
-    client = OpenAI(
-        api_key=CONFIG["OPENAI_API_KEY"],
-    )
+    vazio = {"categoria": "Outro", "urgente": False, "motivo_urgencia": None, "cliente": None, "resumo": ""}
 
     clientes_lista = ", ".join(CLIENTES_CONHECIDOS.keys())
 
@@ -282,24 +296,27 @@ Analise o email abaixo e retorne SOMENTE um objeto JSON válido, sem texto adici
 
 REGRAS DE CLASSIFICAÇÃO (siga nesta ordem de prioridade):
 
-1. AUDIENCIA: se o email tratar de audiência (designação, pauta, intimação para audiência,
+1. INTERNO: se o email for enviado por alguém do domínio @falaw.com.br para outro(s) do mesmo
+   domínio (comunicação interna do escritório) → categoria "Interno"
+
+2. AUDIENCIA: se o email tratar de audiência (designação, pauta, intimação para audiência,
    ata de audiência, adiamento, audiência una, inicial ou de instrução) → categoria "Audiencias"
 
-2. CONSULTIVO: se for uma consulta jurídica (cliente ou colega pedindo parecer, opinião
+3. CONSULTIVO: se for uma consulta jurídica (cliente ou colega pedindo parecer, opinião
    jurídica, análise de situação, dúvida sobre legislação/procedimento) → categoria "Consultivo"
 
-3. CLIENTE: se o email for de/sobre um destes clientes do escritório:
+4. CLIENTE: se o email for de/sobre um destes clientes do escritório:
    {clientes_lista}
    → categoria "Cliente" e preencha o campo "cliente" com o nome EXATO como está na lista.
    Atenção a variações: "Dr. Consulta" = Cuidar.me | "Frete" = CargoX | "Banco Inter" = Inter
 
-4. OUTROS CLIENTES: se for claramente de um cliente do escritório mas que NÃO está
+5. OUTROS CLIENTES: se for claramente de um cliente do escritório mas que NÃO está
    na lista acima → categoria "OutrosClientes"
 
-5. PROPAGANDA: marketing, promoções, newsletters comerciais, divulgação de cursos/eventos
+6. PROPAGANDA: marketing, promoções, newsletters comerciais, divulgação de cursos/eventos
    pagos, spam → categoria "Propaganda"
 
-6. OUTRO: tudo que não se encaixar acima → categoria "Outro"
+7. OUTRO: tudo que não se encaixar acima → categoria "Outro"
 
 URGÊNCIA — marque urgente: true se:
 - A palavra "urgente" (ou "URGENTE", "urgência") aparecer no assunto ou corpo
@@ -308,7 +325,7 @@ URGÊNCIA — marque urgente: true se:
 
 JSON esperado:
 {{
-  "categoria": "Audiencias | Consultivo | Cliente | OutrosClientes | Propaganda | Outro",
+  "categoria": "Interno | Audiencias | Consultivo | Cliente | OutrosClientes | Propaganda | Outro",
   "urgente": true ou false,
   "motivo_urgencia": "explicação breve se urgente, senão null",
   "cliente": "nome exato da lista se categoria=Cliente, senão null",
@@ -321,22 +338,33 @@ De: {email.get('de', '')}
 Para: {email.get('para', '')}
 Corpo: {email.get('corpo', '')}"""
 
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=400,
-            temperature=0.1,
-        )
-        texto = response.choices[0].message.content.strip()
-        texto = texto.replace("```json", "").replace("```", "").strip()
-        return json.loads(texto)
-    except json.JSONDecodeError as e:
-        log.error(f"Erro ao parsear JSON do modelo: {e}")
-        return {"categoria": "Outro", "urgente": False, "motivo_urgencia": None, "cliente": None, "resumo": ""}
-    except Exception as e:
-        log.error(f"Erro ao chamar GitHub Models: {e}")
-        return {"categoria": "Outro", "urgente": False, "motivo_urgencia": None, "cliente": None, "resumo": ""}
+    provedores = []
+    if CONFIG["GITHUB_TOKEN"]:
+        provedores.append(("GitHub Models", OpenAI(
+            base_url="https://models.inference.ai.azure.com",
+            api_key=CONFIG["GITHUB_TOKEN"],
+        ), "gpt-4o-mini"))
+    if CONFIG["OPENAI_API_KEY"]:
+        provedores.append(("OpenAI", OpenAI(
+            api_key=CONFIG["OPENAI_API_KEY"],
+        ), "gpt-4o-mini"))
+    if CONFIG["GEMINI_API_KEY"]:
+        provedores.append(("Gemini", OpenAI(
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            api_key=CONFIG["GEMINI_API_KEY"],
+        ), "gemini-2.0-flash"))
+
+    for nome, client, model in provedores:
+        try:
+            return _chamar_modelo(client, model, prompt)
+        except json.JSONDecodeError as e:
+            log.error(f"[{nome}] Erro ao parsear JSON: {e}")
+            return vazio
+        except Exception as e:
+            log.warning(f"[{nome}] Falhou ({e}), tentando próximo provedor...")
+
+    log.error("Todos os provedores de IA falharam.")
+    return vazio
 
 
 # ──────────────────────────────────────────────
