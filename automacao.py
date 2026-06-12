@@ -730,3 +730,101 @@ def executar() -> dict:
 
 if __name__ == "__main__":
     executar()
+
+
+# ──────────────────────────────────────────────
+# RELATÓRIO DE LEITURA POR USUÁRIO
+# ──────────────────────────────────────────────
+
+def _nome_marcadores(service) -> dict:
+    """Retorna dict {label_id: label_name}."""
+    try:
+        result = service.users().labels().list(userId="me").execute()
+        return {l["id"]: l["name"] for l in result.get("labels", [])}
+    except Exception:
+        return {}
+
+
+def _categoria_do_email(label_ids: list, id_para_nome: dict) -> str:
+    """Extrai a categoria Falaw do email a partir dos seus label IDs."""
+    for lid in label_ids:
+        nome = id_para_nome.get(lid, "")
+        if nome.startswith("Falaw/") and "⚠️" not in nome:
+            return nome
+    return "Falaw/?"
+
+
+def gerar_relatorio(horas: int = 24) -> list:
+    """
+    Para cada usuário do domínio, retorna quantos emails classificados
+    nas últimas X horas ainda estão não lidos, com detalhes.
+    """
+    usuarios = listar_usuarios()
+    relatorio = []
+
+    for user_email in usuarios:
+        try:
+            service = get_gmail_service(user_email)
+            id_para_nome = _nome_marcadores(service)
+
+            depois = datetime.now(timezone.utc) - timedelta(hours=horas)
+            timestamp = int(depois.timestamp())
+
+            def _contar(query):
+                try:
+                    r = service.users().messages().list(
+                        userId="me", q=query, maxResults=200
+                    ).execute()
+                    return r.get("messages", [])
+                except Exception:
+                    return []
+
+            todos_msgs     = _contar(f'label:Falaw after:{timestamp}')
+            nao_lidos_msgs = _contar(f'label:Falaw is:unread after:{timestamp}')
+            urgentes_msgs  = _contar(f'label:"Falaw/⚠️ URGENTE" is:unread')
+
+            # Detalhes dos não lidos
+            detalhes = []
+            for msg_ref in nao_lidos_msgs[:50]:
+                try:
+                    msg = service.users().messages().get(
+                        userId="me", id=msg_ref["id"],
+                        format="metadata",
+                        metadataHeaders=["Subject", "From", "Date"]
+                    ).execute()
+                    hdrs = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
+                    label_ids = msg.get("labelIds", [])
+                    urgente = any(
+                        "⚠️ URGENTE" in id_para_nome.get(lid, "")
+                        for lid in label_ids
+                    )
+                    detalhes.append({
+                        "assunto": hdrs.get("Subject", "(sem assunto)")[:100],
+                        "de": hdrs.get("From", "")[:80],
+                        "data": hdrs.get("Date", ""),
+                        "categoria": _categoria_do_email(label_ids, id_para_nome),
+                        "urgente": urgente,
+                    })
+                except Exception:
+                    pass
+
+            relatorio.append({
+                "usuario": user_email,
+                "periodo_horas": horas,
+                "total_classificados": len(todos_msgs),
+                "total_lidos": len(todos_msgs) - len(nao_lidos_msgs),
+                "total_nao_lidos": len(nao_lidos_msgs),
+                "total_urgentes_nao_lidos": len(urgentes_msgs),
+                "emails_nao_lidos": detalhes,
+            })
+
+        except Exception as e:
+            log.error(f"Erro ao gerar relatório para {user_email}: {e}")
+            relatorio.append({
+                "usuario": user_email,
+                "erro": str(e),
+            })
+
+        time.sleep(1)
+
+    return relatorio
