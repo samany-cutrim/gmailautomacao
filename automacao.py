@@ -115,7 +115,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.labels",
     "https://www.googleapis.com/auth/admin.directory.user.readonly",
-    "https://www.googleapis.com/auth/admin.reports.audit.readonly",
 ]
 
 
@@ -139,11 +138,6 @@ def get_gmail_service(user_email: str):
 def get_admin_service():
     creds = get_credentials(CONFIG["ADMIN_USER"])
     return build("admin", "directory_v1", credentials=creds, cache_discovery=False)
-
-
-def get_reports_service():
-    creds = get_credentials(CONFIG["ADMIN_USER"])
-    return build("admin", "reports_v1", credentials=creds, cache_discovery=False)
 
 
 # ──────────────────────────────────────────────
@@ -301,11 +295,9 @@ _KW_CONSULTIVO = [
     "orientacao juridica", "dúvida jurídica", "duvida juridica",
     "me informe", "gostaria de saber", "poderia me informar",
     "preciso de orientação", "preciso de orientacao",
-    "consultivo",  # assunto explicitamente marcado como consultivo
+    "consultivo",
 ]
 
-# Propaganda: palavras que identificam marketing/spam inequivocamente
-# (evitar termos genéricos que aparecem em emails de sistema jurídico)
 _KW_PROPAGANDA = [
     "unsubscribe", "descadastrar", "cancelar inscrição", "cancelar inscricao",
     "newsletter", "email marketing", "e-mail marketing",
@@ -316,8 +308,6 @@ _KW_PROPAGANDA = [
     "clique para descadastrar", "remover da lista",
 ]
 
-# Prefixos de assunto de e-mails de sistema (Benner, Projuris, tribunais, etc.)
-# Esses e-mails devem sempre ser classificados como Interno, independente do remetente.
 _ASSUNTO_SISTEMA = [
     "nova providência de pasta",
     "nova providencia de pasta",
@@ -343,14 +333,9 @@ _KW_URGENTE = [
     "amanhã", "amanha", "hoje", "agora",
 ]
 
-# Domínios/textos associados a clientes conhecidos (ordem importa: mais específico primeiro)
-# Chave: fragmento que pode aparecer no campo "De:" ou no assunto/corpo
-# Valor: nome canônico em CLIENTES_CONHECIDOS
 _DOMINIOS_CLIENTES = {
-    # aliases internos @falaw.com.br de contas de clientes
     "juridicobancointer@falaw": "Inter",
     "juridico.inter@falaw":     "Inter",
-    # por domínio de email
     "apdata.com":       "Apdata",
     "baymetrics.com":   "Baymetrics",
     "bipa.com":         "Bipa",
@@ -383,9 +368,6 @@ _DOMINIOS_CLIENTES = {
     "solinftec.com":    "Solinftec",
 }
 
-# Fragmentos de texto (assunto) para detectar clientes
-# ATENÇÃO: usar termos específicos para evitar falsos positivos.
-# Palavras curtas e ambíguas (ex: "inter", "musa", "gupy") SÓ no assunto, não no corpo.
 _TEXTO_CLIENTES_ASSUNTO = {
     "apdata":        "Apdata",
     "baymetrics":    "Baymetrics",
@@ -417,7 +399,6 @@ _TEXTO_CLIENTES_ASSUNTO = {
     "solinftec":     "Solinftec",
 }
 
-# No corpo, usar apenas fragmentos inequívocos (domínios, nomes completos)
 _TEXTO_CLIENTES_CORPO = {
     "apdata":          "Apdata",
     "baymetrics":      "Baymetrics",
@@ -434,7 +415,6 @@ _TEXTO_CLIENTES_CORPO = {
     "solinftec":       "Solinftec",
 }
 
-# mantido por compatibilidade (usado em _detectar_cliente)
 _TEXTO_CLIENTES = _TEXTO_CLIENTES_ASSUNTO
 
 
@@ -459,14 +439,13 @@ def _detectar_cliente(de: str, assunto: str, corpo: str) -> str | None:
     if cliente:
         return cliente
 
-    # 2. Verifica domínio do remetente
-    # 3. Verifica assunto (termos curtos permitidos aqui)
+    # 2. Verifica assunto (termos curtos permitidos aqui)
     assunto_lower = assunto.lower()
     for fragmento, nome in _TEXTO_CLIENTES_ASSUNTO.items():
         if fragmento in assunto_lower:
             return nome
 
-    # 4. Verifica corpo (apenas termos inequívocos)
+    # 3. Verifica corpo (apenas termos inequívocos)
     corpo_lower = corpo[:1000].lower()
     for fragmento, nome in _TEXTO_CLIENTES_CORPO.items():
         if fragmento in corpo_lower:
@@ -485,7 +464,6 @@ def classificar_email(email: dict) -> dict:
     assunto_lower = assunto.lower()
 
     # ── 0. E-MAILS DE SISTEMA ───────────────────────────────
-    # Notificações de Benner, Projuris, tribunais: sempre Interno
     if any(assunto_lower.startswith(p) or p in assunto_lower for p in _ASSUNTO_SISTEMA):
         urgente = _contem(texto_completo, _KW_URGENTE)
         return {
@@ -497,7 +475,6 @@ def classificar_email(email: dict) -> dict:
         }
 
     # ── 0b. NEWSLETTER INTERNA ───────────────────────────────
-    # Newsletters enviadas pelo próprio escritório → Propaganda
     if "newsletter" in assunto_lower or "informativo |" in assunto_lower:
         return {
             "categoria": "Propaganda",
@@ -508,8 +485,6 @@ def classificar_email(email: dict) -> dict:
         }
 
     # ── 1. ALIAS DE CLIENTE @falaw.com.br ───────────
-    # Ex: juridicobancointer@falaw.com.br é uma conta do cliente Inter,
-    # não um colaborador interno — deve ir para o marcador do cliente.
     cliente_alias = _detectar_cliente_por_alias_falaw(de)
     if cliente_alias:
         urgente = _contem(texto_completo, _KW_URGENTE)
@@ -525,7 +500,6 @@ def classificar_email(email: dict) -> dict:
     de_interno = "@falaw.com.br" in de.lower()
     para_interno = "@falaw.com.br" in para.lower()
     if de_interno and para_interno:
-        # Se o assunto indica explicitamente que é consultivo, prioriza essa categoria
         if "consultivo" in assunto.lower():
             cliente = _detectar_cliente(de, assunto, corpo)
             urgente = _contem(texto_completo, _KW_URGENTE)
@@ -547,7 +521,7 @@ def classificar_email(email: dict) -> dict:
             "resumo": assunto[:120],
         }
 
-    # ── 2. AUDIÊNCIAS ───────────────────────────────
+    # ── 3. AUDIÊNCIAS ───────────────────────────────
     if _contem(texto_completo, _KW_AUDIENCIAS):
         cliente = _detectar_cliente(de, assunto, corpo)
         urgente = _contem(texto_completo, _KW_URGENTE)
@@ -559,11 +533,10 @@ def classificar_email(email: dict) -> dict:
             "resumo": assunto[:120],
         }
 
-    # ── 3. CLIENTE CONHECIDO ────────────────────────
+    # ── 4. CLIENTE CONHECIDO ────────────────────────
     cliente = _detectar_cliente(de, assunto, corpo)
     if cliente:
         urgente = _contem(texto_completo, _KW_URGENTE)
-        # Se o remetente externo usa linguagem consultiva → Consultivo
         if not de_interno and _contem(texto_completo, _KW_CONSULTIVO):
             return {
                 "categoria": "Consultivo",
@@ -580,7 +553,7 @@ def classificar_email(email: dict) -> dict:
             "resumo": assunto[:120],
         }
 
-    # ── 4. CONSULTIVO (sem cliente identificado) ────
+    # ── 5. CONSULTIVO (sem cliente identificado) ────
     if not de_interno and _contem(texto_completo, _KW_CONSULTIVO):
         urgente = _contem(texto_completo, _KW_URGENTE)
         return {
@@ -591,7 +564,7 @@ def classificar_email(email: dict) -> dict:
             "resumo": assunto[:120],
         }
 
-    # ── 5. PROPAGANDA ───────────────────────────────
+    # ── 6. PROPAGANDA ───────────────────────────────
     if _contem(texto_completo, _KW_PROPAGANDA):
         return {
             "categoria": "Propaganda",
@@ -601,7 +574,7 @@ def classificar_email(email: dict) -> dict:
             "resumo": assunto[:120],
         }
 
-    # ── 6. OUTRO ────────────────────────────────────
+    # ── 7. OUTRO ────────────────────────────────────
     urgente = _contem(texto_completo, _KW_URGENTE)
     return {
         "categoria": "Outro",
@@ -736,296 +709,3 @@ def executar() -> dict:
 
 if __name__ == "__main__":
     executar()
-
-
-# ──────────────────────────────────────────────
-# RELATÓRIO DE LEITURA POR USUÁRIO
-# ──────────────────────────────────────────────
-
-def _nome_marcadores(service) -> dict:
-    """Retorna dict {label_id: label_name}."""
-    try:
-        result = service.users().labels().list(userId="me").execute()
-        return {l["id"]: l["name"] for l in result.get("labels", [])}
-    except Exception:
-        return {}
-
-
-def _categoria_do_email(label_ids: list, id_para_nome: dict) -> str:
-    """Extrai a categoria Falaw do email a partir dos seus label IDs."""
-    for lid in label_ids:
-        nome = id_para_nome.get(lid, "")
-        if nome.startswith("Falaw/") and "⚠️" not in nome:
-            return nome
-    return "Falaw/?"
-
-
-def gerar_relatorio(horas: int = 24) -> list:
-    """
-    Para cada usuário do domínio, retorna emails classificados nas últimas X horas
-    com informação de quem leu e quando (via Admin Reports API).
-    Nota: dados de audit têm atraso de 1-3 horas.
-    """
-    usuarios = listar_usuarios()
-
-    # ── Busca eventos de leitura da Reports API (uma chamada para o domínio todo) ──
-    # Indexado por message_id → lista de {usuario, horario}
-    leituras_por_msg: dict[str, list] = {}
-    try:
-        reports = get_reports_service()
-        depois = datetime.now(timezone.utc) - timedelta(hours=horas)
-        start_time = depois.strftime("%Y-%m-%dT%H:%M:%SZ")
-        request = reports.activities().list(
-            userKey="all",
-            applicationName="gmail",
-            eventName="message_read",
-            startTime=start_time,
-            maxResults=1000,
-        )
-        while request is not None:
-            resp = request.execute()
-            for activity in resp.get("items", []):
-                actor = activity.get("actor", {}).get("email", "")
-                horario = activity.get("id", {}).get("time", "")
-                for event in activity.get("events", []):
-                    for param in event.get("parameters", []):
-                        if param.get("name") == "message_id":
-                            mid = param.get("value", "")
-                            if mid:
-                                if mid not in leituras_por_msg:
-                                    leituras_por_msg[mid] = []
-                                leituras_por_msg[mid].append({
-                                    "usuario": actor,
-                                    "horario": horario,
-                                })
-            request = reports.activities().list_next(request, resp)
-        log.info(f"Audit: {len(leituras_por_msg)} mensagens com evento de leitura.")
-    except Exception as e:
-        log.warning(f"Reports API indisponível ou sem dados ainda: {e}")
-
-    relatorio = []
-
-    for user_email in usuarios:
-        try:
-            service = get_gmail_service(user_email)
-            id_para_nome = _nome_marcadores(service)
-
-            depois = datetime.now(timezone.utc) - timedelta(hours=horas)
-            timestamp = int(depois.timestamp())
-
-            def _listar(query):
-                try:
-                    r = service.users().messages().list(
-                        userId="me", q=query, maxResults=200
-                    ).execute()
-                    return r.get("messages", [])
-                except Exception:
-                    return []
-
-            todos_msgs     = _listar(f'label:Falaw after:{timestamp}')
-            nao_lidos_msgs = _listar(f'label:Falaw is:unread after:{timestamp}')
-            urgentes_msgs  = _listar(f'label:"Falaw/⚠️ URGENTE" is:unread')
-
-            nao_lidos_ids = {m["id"] for m in nao_lidos_msgs}
-
-            # Detalha TODOS os emails classificados (lidos e não lidos)
-            emails = []
-            for msg_ref in todos_msgs[:100]:
-                try:
-                    msg = service.users().messages().get(
-                        userId="me", id=msg_ref["id"],
-                        format="metadata",
-                        metadataHeaders=["Subject", "From", "Date"]
-                    ).execute()
-                    hdrs = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
-                    label_ids = msg.get("labelIds", [])
-                    urgente = any(
-                        "⚠️ URGENTE" in id_para_nome.get(lid, "")
-                        for lid in label_ids
-                    )
-                    nao_lido = msg_ref["id"] in nao_lidos_ids
-
-                    # Leituras do audit para este message_id
-                    leituras = leituras_por_msg.get(msg_ref["id"], [])
-
-                    emails.append({
-                        "assunto": hdrs.get("Subject", "(sem assunto)")[:100],
-                        "de": hdrs.get("From", "")[:80],
-                        "data": hdrs.get("Date", ""),
-                        "categoria": _categoria_do_email(label_ids, id_para_nome),
-                        "urgente": urgente,
-                        "lido": not nao_lido,
-                        "leituras": leituras,  # [{usuario, horario}, ...]
-                    })
-                except Exception:
-                    pass
-
-            relatorio.append({
-                "usuario": user_email,
-                "periodo_horas": horas,
-                "total_classificados": len(todos_msgs),
-                "total_lidos": len(todos_msgs) - len(nao_lidos_msgs),
-                "total_nao_lidos": len(nao_lidos_msgs),
-                "total_urgentes_nao_lidos": len(urgentes_msgs),
-                "emails": emails,
-            })
-
-        except Exception as e:
-            log.error(f"Erro ao gerar relatório para {user_email}: {e}")
-            relatorio.append({"usuario": user_email, "erro": str(e)})
-
-        time.sleep(1)
-
-    return relatorio
-
-
-# ──────────────────────────────────────────────
-# RELATÓRIO DE EMAILS ENVIADOS — quem leu e quando
-# ──────────────────────────────────────────────
-
-def gerar_relatorio_enviados(horas: int = 24) -> list:
-    """
-    Para cada usuário do domínio, lista os emails ENVIADOS nas últimas X horas
-    e mostra quais destinatários internos leram (via Admin Reports API).
-
-    Funciona cruzando o RFC Message-ID (header padrão, igual para remetente
-    e destinatário) com os eventos 'message_read' do audit do Google.
-
-    Nota: dados de audit têm atraso de 1-3 horas.
-    """
-    usuarios = listar_usuarios()
-    dominio = CONFIG["DOMAIN"]
-
-    # ── 1. Busca todos os eventos de leitura do período ──────────────
-    # Indexado por RFC Message-ID → lista de {usuario, horario}
-    leituras_por_rfc_id: dict[str, list] = {}
-    try:
-        reports = get_reports_service()
-        depois = datetime.now(timezone.utc) - timedelta(hours=horas)
-        start_time = depois.strftime("%Y-%m-%dT%H:%M:%SZ")
-        request = reports.activities().list(
-            userKey="all",
-            applicationName="gmail",
-            eventName="message_read",
-            startTime=start_time,
-            maxResults=1000,
-        )
-        while request is not None:
-            resp = request.execute()
-            for activity in resp.get("items", []):
-                actor = activity.get("actor", {}).get("email", "")
-                horario = activity.get("id", {}).get("time", "")
-                for event in activity.get("events", []):
-                    for param in event.get("parameters", []):
-                        if param.get("name") == "message_id":
-                            mid = param.get("value", "")
-                            if mid:
-                                if mid not in leituras_por_rfc_id:
-                                    leituras_por_rfc_id[mid] = []
-                                leituras_por_rfc_id[mid].append({
-                                    "usuario": actor,
-                                    "horario": horario,
-                                })
-            request = reports.activities().list_next(request, resp)
-        log.info(f"Audit enviados: {len(leituras_por_rfc_id)} mensagens com leitura registrada.")
-    except Exception as e:
-        log.warning(f"Reports API indisponível ou sem dados ainda: {e}")
-
-    # ── 2. Para cada usuário, busca emails enviados ──────────────────
-    relatorio = []
-
-    for remetente in usuarios:
-        try:
-            service = get_gmail_service(remetente)
-            depois = datetime.now(timezone.utc) - timedelta(hours=horas)
-            timestamp = int(depois.timestamp())
-
-            msgs_refs = []
-            try:
-                r = service.users().messages().list(
-                    userId="me",
-                    q=f'in:sent after:{timestamp}',
-                    maxResults=100,
-                ).execute()
-                msgs_refs = r.get("messages", [])
-            except Exception:
-                pass
-
-            emails_enviados = []
-            for msg_ref in msgs_refs:
-                try:
-                    msg = service.users().messages().get(
-                        userId="me", id=msg_ref["id"],
-                        format="metadata",
-                        metadataHeaders=["Subject", "To", "CC", "Date", "Message-ID"],
-                    ).execute()
-                    hdrs = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
-
-                    assunto = hdrs.get("Subject", "(sem assunto)")[:100]
-                    data    = hdrs.get("Date", "")
-                    rfc_id  = hdrs.get("Message-ID", "").strip("<>")
-
-                    # Destinatários internos (filtra apenas @falaw.com.br)
-                    destinatarios_raw = hdrs.get("To", "") + "," + hdrs.get("CC", "")
-                    destinatarios_internos = [
-                        e.strip().lower().split()[-1].strip("<>")
-                        for e in destinatarios_raw.split(",")
-                        if f"@{dominio}" in e.lower() and e.strip()
-                    ]
-                    # Remove o próprio remetente da lista
-                    destinatarios_internos = [
-                        d for d in destinatarios_internos
-                        if d != remetente.lower()
-                    ]
-
-                    if not destinatarios_internos:
-                        continue  # email só externo, pula
-
-                    # Leituras registradas para este Message-ID
-                    todas_leituras = leituras_por_rfc_id.get(rfc_id, [])
-
-                    # Cruza com destinatários internos
-                    leituras_internos = {
-                        l["usuario"].lower(): l["horario"]
-                        for l in todas_leituras
-                        if l["usuario"].lower() in destinatarios_internos
-                    }
-
-                    status_destinatarios = []
-                    for dest in destinatarios_internos:
-                        if dest in leituras_internos:
-                            status_destinatarios.append({
-                                "usuario": dest,
-                                "lido": True,
-                                "horario": leituras_internos[dest],
-                            })
-                        else:
-                            status_destinatarios.append({
-                                "usuario": dest,
-                                "lido": False,
-                                "horario": None,
-                            })
-
-                    emails_enviados.append({
-                        "assunto": assunto,
-                        "data": data,
-                        "destinatarios": status_destinatarios,
-                        "todos_leram": all(d["lido"] for d in status_destinatarios),
-                    })
-                except Exception:
-                    pass
-
-            relatorio.append({
-                "remetente": remetente,
-                "periodo_horas": horas,
-                "total_enviados": len(emails_enviados),
-                "emails": emails_enviados,
-            })
-
-        except Exception as e:
-            log.error(f"Erro ao gerar relatório de enviados para {remetente}: {e}")
-            relatorio.append({"remetente": remetente, "erro": str(e)})
-
-        time.sleep(1)
-
-    return relatorio
