@@ -8,13 +8,11 @@ Toda a configuração vem de variáveis de ambiente (ver README_DEPLOY.md).
 """
 
 import os
-import json
 import base64
 import logging
 import time
 from datetime import datetime, timezone, timedelta
 
-from openai import OpenAI
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -29,9 +27,6 @@ CONFIG = {
     ),
     "DOMAIN": os.environ.get("WORKSPACE_DOMAIN", "falaw.com.br"),
     "ADMIN_USER": os.environ.get("ADMIN_USER", "samany@falaw.com.br"),
-    "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN", ""),
-    "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", ""),
-    "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
     "MAX_EMAILS_PER_RUN": int(os.environ.get("MAX_EMAILS_PER_RUN", "20")),
     "HOURS_LOOKBACK": int(os.environ.get("HOURS_LOOKBACK", "2")),
     "RUN_FOR_ALL_USERS": os.environ.get("RUN_FOR_ALL_USERS", "false").lower() == "true",
@@ -267,104 +262,226 @@ def ler_email(service, msg_id: str) -> dict:
 
 
 # ──────────────────────────────────────────────
-# CLASSIFICAÇÃO COM IA (GitHub Models → OpenAI → Gemini)
+# CLASSIFICAÇÃO POR REGRAS PYTHON (sem IA)
 # ──────────────────────────────────────────────
-def _chamar_modelo(client, model: str, prompt: str) -> dict:
-    """Chama um modelo via cliente OpenAI-compatível e retorna JSON."""
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=400,
-        temperature=0.1,
-    )
-    texto = response.choices[0].message.content.strip()
-    texto = texto.replace("```json", "").replace("```", "").strip()
-    return json.loads(texto)
+
+# Palavras-chave por categoria (assunto + corpo, case-insensitive)
+_KW_AUDIENCIAS = [
+    "audiência", "audiencia", "pauta de audiência", "pauta de audiencia",
+    "designação de audiência", "designacao de audiencia",
+    "intimação para audiência", "intimacao para audiencia",
+    "ata de audiência", "ata de audiencia", "audiência una",
+    "audiencia una", "audiência inicial", "audiencia inicial",
+    "audiência de instrução", "audiencia de instrucao",
+    "adiamento de audiência", "adiamento de audiencia",
+    "conciliação", "conciliacao",
+]
+
+_KW_CONSULTIVO = [
+    "parecer", "consulta jurídica", "consulta juridica",
+    "opinião jurídica", "opiniao juridica", "análise jurídica",
+    "analise juridica", "esclarecimento", "orientação jurídica",
+    "orientacao juridica", "dúvida jurídica", "duvida juridica",
+    "me informe", "gostaria de saber", "poderia me informar",
+    "preciso de orientação", "preciso de orientacao",
+]
+
+_KW_PROPAGANDA = [
+    "unsubscribe", "descadastrar", "cancelar inscrição",
+    "newsletter", "promoção", "promocao", "oferta especial",
+    "clique aqui", "saiba mais", "acesse agora", "curso",
+    "webinar", "workshop", "evento gratuito", "evento pago",
+    "patrocinado", "publicidade", "marketing",
+    "não responda este e-mail", "nao responda este e-mail",
+    "este é um e-mail automático", "este e um e-mail automatico",
+    "email marketing",
+]
+
+_KW_URGENTE = [
+    "urgente", "urgência", "urgencia", "prazo fatal", "penhora",
+    "bloqueio", "liminar", "tutela", "bacenjud", "renajud",
+    "citação", "citacao", "intimação com prazo", "intimacao com prazo",
+    "mandado", "multa", "execução", "execucao", "arresto",
+    "sequestro de bens", "leilão", "leilao", "hasta pública", "hasta publica",
+]
+
+# Domínios/textos associados a clientes conhecidos (ordem importa: mais específico primeiro)
+# Chave: fragmento que pode aparecer no campo "De:" ou no assunto/corpo
+# Valor: nome canônico em CLIENTES_CONHECIDOS
+_DOMINIOS_CLIENTES = {
+    # por domínio de email
+    "apdata.com":       "Apdata",
+    "baymetrics.com":   "Baymetrics",
+    "bipa.com":         "Bipa",
+    "buser.com":        "Buser",
+    "cuidar.me":        "Cuidar.me",
+    "drconsulta":       "Cuidar.me",
+    "dr.consulta":      "Cuidar.me",
+    "digibee.com":      "Digibee",
+    "cargox.com":       "CargoX",
+    "gft.com":          "GFT",
+    "grupodoria.com":   "Grupo Dória",
+    "gupy.io":          "Gupy",
+    "hubees.com":       "Hubees",
+    "ifood.com":        "Ifood",
+    "kpg.com":          "KPG",
+    "lemon.energy":     "Lemon",
+    "musa.com":         "Musa",
+    "nuvemshop.com":    "Nuvemshop",
+    "pegepet.com":      "Peg&Pet",
+    "pier.digital":     "Pier",
+    "pier.finance":     "Pier",
+    "bancointer.com":   "Inter",
+    "inter.co":         "Inter",
+    "@inter.":          "Inter",
+    "pravaler.com":     "Pravaler",
+    "quero.com":        "Quero",
+    "quero.education":  "Quero",
+    "rabbot.com":       "Rabbot",
+    "safira.com":       "Safira",
+    "solinftec.com":    "Solinftec",
+}
+
+# Fragmentos de texto (assunto/corpo) para detectar clientes
+_TEXTO_CLIENTES = {
+    "apdata":       "Apdata",
+    "baymetrics":   "Baymetrics",
+    "bipa":         "Bipa",
+    "buser":        "Buser",
+    "cuidar.me":    "Cuidar.me",
+    "dr. consulta": "Cuidar.me",
+    "dr consulta":  "Cuidar.me",
+    "digibee":      "Digibee",
+    "cargox":       "CargoX",
+    "frete.com":    "CargoX",
+    " gft ":        "GFT",
+    "grupo dória":  "Grupo Dória",
+    "grupo doria":  "Grupo Dória",
+    "gupy":         "Gupy",
+    "hubees":       "Hubees",
+    "ifood":        "Ifood",
+    " kpg ":        "KPG",
+    "lemon energy": "Lemon",
+    " musa ":       "Musa",
+    "nuvemshop":    "Nuvemshop",
+    "peg&pet":      "Peg&Pet",
+    "peg e pet":    "Peg&Pet",
+    "pier.digital": "Pier",
+    "banco inter":  "Inter",
+    "pravaler":     "Pravaler",
+    "quero edu":    "Quero",
+    "rabbot":       "Rabbot",
+    "safira":       "Safira",
+    "solinftec":    "Solinftec",
+}
+
+
+def _contem(texto: str, palavras: list) -> bool:
+    t = texto.lower()
+    return any(p in t for p in palavras)
+
+
+def _detectar_cliente(de: str, assunto: str, corpo: str) -> str | None:
+    """Retorna o nome canônico do cliente detectado, ou None."""
+    de_lower = de.lower()
+    for fragmento, nome in _DOMINIOS_CLIENTES.items():
+        if fragmento in de_lower:
+            return nome
+
+    texto = (assunto + " " + corpo[:1000]).lower()
+    for fragmento, nome in _TEXTO_CLIENTES.items():
+        if fragmento in texto:
+            return nome
+
+    return None
 
 
 def classificar_email(email: dict) -> dict:
-    """
-    Tenta classificar o email usando GitHub Models, OpenAI e Gemini como fallback.
-    """
-    vazio = {"categoria": "Outro", "urgente": False, "motivo_urgencia": None, "cliente": None, "resumo": ""}
+    """Classifica o email usando regras Python puras (sem IA)."""
+    de = email.get("de", "")
+    para = email.get("para", "")
+    assunto = email.get("assunto", "")
+    corpo = email.get("corpo", "")
+    texto_completo = assunto + " " + corpo
 
-    clientes_lista = ", ".join(CLIENTES_CONHECIDOS.keys())
+    # ── 1. INTERNO ──────────────────────────────────
+    de_interno = "@falaw.com.br" in de.lower()
+    para_interno = "@falaw.com.br" in para.lower()
+    if de_interno and para_interno:
+        categoria = "Interno"
+        cliente = _detectar_cliente(de, assunto, corpo)
+        urgente = _contem(texto_completo, _KW_URGENTE)
+        return {
+            "categoria": categoria,
+            "urgente": urgente,
+            "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
+            "cliente": cliente,
+            "resumo": assunto[:120],
+        }
 
-    prompt = f"""Você é um assistente jurídico do escritório Falaw Advogados, especializado em direito do trabalho brasileiro.
+    # ── 2. AUDIÊNCIAS ───────────────────────────────
+    if _contem(texto_completo, _KW_AUDIENCIAS):
+        cliente = _detectar_cliente(de, assunto, corpo)
+        urgente = _contem(texto_completo, _KW_URGENTE)
+        return {
+            "categoria": "Audiencias",
+            "urgente": urgente,
+            "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
+            "cliente": cliente,
+            "resumo": assunto[:120],
+        }
 
-Analise o email abaixo e retorne SOMENTE um objeto JSON válido, sem texto adicional, sem markdown.
+    # ── 3. CLIENTE CONHECIDO ────────────────────────
+    cliente = _detectar_cliente(de, assunto, corpo)
+    if cliente:
+        urgente = _contem(texto_completo, _KW_URGENTE)
+        # Se o remetente externo usa linguagem consultiva → Consultivo
+        if not de_interno and _contem(texto_completo, _KW_CONSULTIVO):
+            return {
+                "categoria": "Consultivo",
+                "urgente": urgente,
+                "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
+                "cliente": cliente,
+                "resumo": assunto[:120],
+            }
+        return {
+            "categoria": "Cliente",
+            "urgente": urgente,
+            "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
+            "cliente": cliente,
+            "resumo": assunto[:120],
+        }
 
-REGRAS DE CLASSIFICAÇÃO (siga nesta ordem de prioridade):
+    # ── 4. CONSULTIVO (sem cliente identificado) ────
+    if not de_interno and _contem(texto_completo, _KW_CONSULTIVO):
+        urgente = _contem(texto_completo, _KW_URGENTE)
+        return {
+            "categoria": "Consultivo",
+            "urgente": urgente,
+            "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
+            "cliente": None,
+            "resumo": assunto[:120],
+        }
 
-1. INTERNO: se o email for enviado por alguém do domínio @falaw.com.br para outro(s) do mesmo
-   domínio (comunicação interna do escritório) → categoria "Interno"
+    # ── 5. PROPAGANDA ───────────────────────────────
+    if _contem(texto_completo, _KW_PROPAGANDA):
+        return {
+            "categoria": "Propaganda",
+            "urgente": False,
+            "motivo_urgencia": None,
+            "cliente": None,
+            "resumo": assunto[:120],
+        }
 
-2. AUDIENCIA: se o email tratar de audiência (designação, pauta, intimação para audiência,
-   ata de audiência, adiamento, audiência una, inicial ou de instrução) → categoria "Audiencias"
-
-3. CONSULTIVO: se for uma consulta jurídica (cliente ou colega pedindo parecer, opinião
-   jurídica, análise de situação, dúvida sobre legislação/procedimento) → categoria "Consultivo"
-
-4. CLIENTE: se o email for de/sobre um destes clientes do escritório:
-   {clientes_lista}
-   → categoria "Cliente" e preencha o campo "cliente" com o nome EXATO como está na lista.
-   Atenção a variações: "Dr. Consulta" = Cuidar.me | "Frete" = CargoX | "Banco Inter" = Inter
-
-5. OUTROS CLIENTES: se for claramente de um cliente do escritório mas que NÃO está
-   na lista acima → categoria "OutrosClientes"
-
-6. PROPAGANDA: marketing, promoções, newsletters comerciais, divulgação de cursos/eventos
-   pagos, spam → categoria "Propaganda"
-
-7. OUTRO: tudo que não se encaixar acima → categoria "Outro"
-
-URGÊNCIA — marque urgente: true se:
-- A palavra "urgente" (ou "URGENTE", "urgência") aparecer no assunto ou corpo
-- Mencionar: prazo fatal, penhora, bloqueio, liminar, tutela, bacenjud,
-  citação, intimação com prazo, mandado, multa, execução
-
-JSON esperado:
-{{
-  "categoria": "Interno | Audiencias | Consultivo | Cliente | OutrosClientes | Propaganda | Outro",
-  "urgente": true ou false,
-  "motivo_urgencia": "explicação breve se urgente, senão null",
-  "cliente": "nome exato da lista se categoria=Cliente, senão null",
-  "resumo": "1 frase resumindo o email"
-}}
-
-Email:
-Assunto: {email.get('assunto', '')}
-De: {email.get('de', '')}
-Para: {email.get('para', '')}
-Corpo: {email.get('corpo', '')}"""
-
-    provedores = []
-    if CONFIG["GITHUB_TOKEN"]:
-        provedores.append(("GitHub Models", OpenAI(
-            base_url="https://models.inference.ai.azure.com",
-            api_key=CONFIG["GITHUB_TOKEN"],
-        ), "gpt-4o-mini"))
-    if CONFIG["OPENAI_API_KEY"]:
-        provedores.append(("OpenAI", OpenAI(
-            api_key=CONFIG["OPENAI_API_KEY"],
-        ), "gpt-4o-mini"))
-    if CONFIG["GEMINI_API_KEY"]:
-        provedores.append(("Gemini", OpenAI(
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            api_key=CONFIG["GEMINI_API_KEY"],
-        ), "gemini-2.0-flash"))
-
-    for nome, client, model in provedores:
-        try:
-            return _chamar_modelo(client, model, prompt)
-        except json.JSONDecodeError as e:
-            log.error(f"[{nome}] Erro ao parsear JSON: {e}")
-            return vazio
-        except Exception as e:
-            log.warning(f"[{nome}] Falhou ({e}), tentando próximo provedor...")
-
-    log.error("Todos os provedores de IA falharam.")
-    return vazio
+    # ── 6. OUTRO ────────────────────────────────────
+    urgente = _contem(texto_completo, _KW_URGENTE)
+    return {
+        "categoria": "Outro",
+        "urgente": urgente,
+        "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
+        "cliente": None,
+        "resumo": assunto[:120],
+    }
 
 
 # ──────────────────────────────────────────────
@@ -385,7 +502,6 @@ def aplicar_marcadores(service, msg_id: str, classificacao: dict, label_ids: dic
         if categoria == "Cliente" and cliente in CLIENTES_CONHECIDOS:
             nome_marcador = CLIENTES_CONHECIDOS[cliente]
         elif categoria == "Cliente":
-            # IA disse Cliente mas o nome não está na lista → Outros Clientes
             nome_marcador = MARCADORES["OutrosClientes"]
         else:
             nome_marcador = MARCADORES.get(categoria, MARCADORES["Outro"])
@@ -394,6 +510,12 @@ def aplicar_marcadores(service, msg_id: str, classificacao: dict, label_ids: dic
 
         if nome_marcador in label_ids:
             labels_para_adicionar.append(label_ids[nome_marcador])
+
+        # Adiciona também o marcador do cliente se identificado em qualquer categoria
+        if cliente and cliente in CLIENTES_CONHECIDOS and categoria != "Cliente":
+            marcador_cliente = CLIENTES_CONHECIDOS[cliente]
+            if marcador_cliente in label_ids and label_ids[marcador_cliente] not in labels_para_adicionar:
+                labels_para_adicionar.append(label_ids[marcador_cliente])
 
         if urgente and MARCADORES["URGENTE"] in label_ids:
             labels_para_adicionar.append(label_ids[MARCADORES["URGENTE"]])
