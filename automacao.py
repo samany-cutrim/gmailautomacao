@@ -597,7 +597,7 @@ def executar() -> dict:
 
     for user_email in usuarios:
         resultados.append(processar_usuario(user_email))
-        time.sleep(5)  # pausa entre usuários para não estourar rate limit
+        time.sleep(1)  # pausa mínima entre usuários (sem IA, não há rate limit externo)
 
     resumo = {
         "executado_em": inicio.isoformat(),
