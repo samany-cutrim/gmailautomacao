@@ -303,6 +303,7 @@ _KW_URGENTE = [
     "citação", "citacao", "intimação com prazo", "intimacao com prazo",
     "mandado", "multa", "execução", "execucao", "arresto",
     "sequestro de bens", "leilão", "leilao", "hasta pública", "hasta publica",
+    "amanhã", "amanha", "hoje", "agora",
 ]
 
 # Domínios/textos associados a clientes conhecidos (ordem importa: mais específico primeiro)
