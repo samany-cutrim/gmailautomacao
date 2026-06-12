@@ -29,7 +29,7 @@ CONFIG = {
     ),
     "DOMAIN": os.environ.get("WORKSPACE_DOMAIN", "falaw.com.br"),
     "ADMIN_USER": os.environ.get("ADMIN_USER", "samany@falaw.com.br"),
-    "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN", ""),
+    "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", ""),
     "MAX_EMAILS_PER_RUN": int(os.environ.get("MAX_EMAILS_PER_RUN", "20")),
     "HOURS_LOOKBACK": int(os.environ.get("HOURS_LOOKBACK", "2")),
     "RUN_FOR_ALL_USERS": os.environ.get("RUN_FOR_ALL_USERS", "false").lower() == "true",
@@ -264,15 +264,14 @@ def ler_email(service, msg_id: str) -> dict:
 
 
 # ──────────────────────────────────────────────
-# CLASSIFICAÇÃO COM IA (GitHub Models — gpt-4o)
+# CLASSIFICAÇÃO COM IA (OpenAI — gpt-4o-mini)
 # ──────────────────────────────────────────────
 def classificar_email(email: dict) -> dict:
     """
-    Envia o email para GitHub Models (gpt-4o) e retorna a classificação.
+    Envia o email para OpenAI e retorna a classificação.
     """
     client = OpenAI(
-        base_url="https://models.inference.ai.azure.com",
-        api_key=CONFIG["GITHUB_TOKEN"],
+        api_key=CONFIG["OPENAI_API_KEY"],
     )
 
     clientes_lista = ", ".join(CLIENTES_CONHECIDOS.keys())
@@ -324,7 +323,7 @@ Corpo: {email.get('corpo', '')}"""
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=400,
             temperature=0.1,
