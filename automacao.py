@@ -877,3 +877,155 @@ def gerar_relatorio(horas: int = 24) -> list:
         time.sleep(1)
 
     return relatorio
+
+
+# ──────────────────────────────────────────────
+# RELATÓRIO DE EMAILS ENVIADOS — quem leu e quando
+# ──────────────────────────────────────────────
+
+def gerar_relatorio_enviados(horas: int = 24) -> list:
+    """
+    Para cada usuário do domínio, lista os emails ENVIADOS nas últimas X horas
+    e mostra quais destinatários internos leram (via Admin Reports API).
+
+    Funciona cruzando o RFC Message-ID (header padrão, igual para remetente
+    e destinatário) com os eventos 'message_read' do audit do Google.
+
+    Nota: dados de audit têm atraso de 1-3 horas.
+    """
+    usuarios = listar_usuarios()
+    dominio = CONFIG["DOMAIN"]
+
+    # ── 1. Busca todos os eventos de leitura do período ──────────────
+    # Indexado por RFC Message-ID → lista de {usuario, horario}
+    leituras_por_rfc_id: dict[str, list] = {}
+    try:
+        reports = get_reports_service()
+        depois = datetime.now(timezone.utc) - timedelta(hours=horas)
+        start_time = depois.strftime("%Y-%m-%dT%H:%M:%SZ")
+        request = reports.activities().list(
+            userKey="all",
+            applicationName="gmail",
+            eventName="message_read",
+            startTime=start_time,
+            maxResults=1000,
+        )
+        while request is not None:
+            resp = request.execute()
+            for activity in resp.get("items", []):
+                actor = activity.get("actor", {}).get("email", "")
+                horario = activity.get("id", {}).get("time", "")
+                for event in activity.get("events", []):
+                    for param in event.get("parameters", []):
+                        if param.get("name") == "message_id":
+                            mid = param.get("value", "")
+                            if mid:
+                                if mid not in leituras_por_rfc_id:
+                                    leituras_por_rfc_id[mid] = []
+                                leituras_por_rfc_id[mid].append({
+                                    "usuario": actor,
+                                    "horario": horario,
+                                })
+            request = reports.activities().list_next(request, resp)
+        log.info(f"Audit enviados: {len(leituras_por_rfc_id)} mensagens com leitura registrada.")
+    except Exception as e:
+        log.warning(f"Reports API indisponível ou sem dados ainda: {e}")
+
+    # ── 2. Para cada usuário, busca emails enviados ──────────────────
+    relatorio = []
+
+    for remetente in usuarios:
+        try:
+            service = get_gmail_service(remetente)
+            depois = datetime.now(timezone.utc) - timedelta(hours=horas)
+            timestamp = int(depois.timestamp())
+
+            msgs_refs = []
+            try:
+                r = service.users().messages().list(
+                    userId="me",
+                    q=f'in:sent after:{timestamp}',
+                    maxResults=100,
+                ).execute()
+                msgs_refs = r.get("messages", [])
+            except Exception:
+                pass
+
+            emails_enviados = []
+            for msg_ref in msgs_refs:
+                try:
+                    msg = service.users().messages().get(
+                        userId="me", id=msg_ref["id"],
+                        format="metadata",
+                        metadataHeaders=["Subject", "To", "CC", "Date", "Message-ID"],
+                    ).execute()
+                    hdrs = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
+
+                    assunto = hdrs.get("Subject", "(sem assunto)")[:100]
+                    data    = hdrs.get("Date", "")
+                    rfc_id  = hdrs.get("Message-ID", "").strip("<>")
+
+                    # Destinatários internos (filtra apenas @falaw.com.br)
+                    destinatarios_raw = hdrs.get("To", "") + "," + hdrs.get("CC", "")
+                    destinatarios_internos = [
+                        e.strip().lower().split()[-1].strip("<>")
+                        for e in destinatarios_raw.split(",")
+                        if f"@{dominio}" in e.lower() and e.strip()
+                    ]
+                    # Remove o próprio remetente da lista
+                    destinatarios_internos = [
+                        d for d in destinatarios_internos
+                        if d != remetente.lower()
+                    ]
+
+                    if not destinatarios_internos:
+                        continue  # email só externo, pula
+
+                    # Leituras registradas para este Message-ID
+                    todas_leituras = leituras_por_rfc_id.get(rfc_id, [])
+
+                    # Cruza com destinatários internos
+                    leituras_internos = {
+                        l["usuario"].lower(): l["horario"]
+                        for l in todas_leituras
+                        if l["usuario"].lower() in destinatarios_internos
+                    }
+
+                    status_destinatarios = []
+                    for dest in destinatarios_internos:
+                        if dest in leituras_internos:
+                            status_destinatarios.append({
+                                "usuario": dest,
+                                "lido": True,
+                                "horario": leituras_internos[dest],
+                            })
+                        else:
+                            status_destinatarios.append({
+                                "usuario": dest,
+                                "lido": False,
+                                "horario": None,
+                            })
+
+                    emails_enviados.append({
+                        "assunto": assunto,
+                        "data": data,
+                        "destinatarios": status_destinatarios,
+                        "todos_leram": all(d["lido"] for d in status_destinatarios),
+                    })
+                except Exception:
+                    pass
+
+            relatorio.append({
+                "remetente": remetente,
+                "periodo_horas": horas,
+                "total_enviados": len(emails_enviados),
+                "emails": emails_enviados,
+            })
+
+        except Exception as e:
+            log.error(f"Erro ao gerar relatório de enviados para {remetente}: {e}")
+            relatorio.append({"remetente": remetente, "erro": str(e)})
+
+        time.sleep(1)
+
+    return relatorio

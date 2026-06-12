@@ -195,3 +195,116 @@ def relatorio(
 </html>"""
 
     return HTMLResponse(content=html)
+
+
+@app.get("/relatorio/enviados", response_class=HTMLResponse)
+def relatorio_enviados(
+    x_run_token: str = Header(default=""),
+    token: str = Query(default=""),
+    horas: int = Query(default=24, ge=1, le=168),
+):
+    """Relatório de emails enviados: quem recebeu, quem leu e quando."""
+    if not RUN_TOKEN:
+        raise HTTPException(status_code=500, detail="RUN_TOKEN não configurado no servidor.")
+    token_recebido = x_run_token or token
+    if token_recebido != RUN_TOKEN:
+        raise HTTPException(status_code=401, detail="Token inválido.")
+
+    try:
+        dados = automacao.gerar_relatorio_enviados(horas=horas)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    gerado_em = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    linhas = ""
+    for u in dados:
+        remetente = u.get("remetente", "")
+        erro = u.get("erro")
+
+        if erro:
+            linhas += f'<tr class="erro"><td colspan="4">{remetente}: Erro — {erro}</td></tr>'
+            continue
+
+        emails = u.get("emails", [])
+        if not emails:
+            linhas += f"""
+        <tr class="cabecalho-usuario">
+            <td colspan="4"><b>{remetente}</b> — nenhum email interno enviado nas últimas {horas}h</td>
+        </tr>"""
+            continue
+
+        linhas += f"""
+        <tr class="cabecalho-usuario">
+            <td colspan="4"><b>{remetente}</b> — {u.get("total_enviados", 0)} email(s) enviado(s)</td>
+        </tr>"""
+
+        for email in emails:
+            assunto = email.get("assunto", "")
+            data    = email.get("data", "")[:22]
+            todos   = email.get("todos_leram", False)
+            icone   = "✅" if todos else "⏳"
+
+            dest_html = ""
+            for d in email.get("destinatarios", []):
+                if d["lido"]:
+                    horario = d["horario"][:16].replace("T", " ") if d["horario"] else ""
+                    dest_html += (
+                        f'<span style="color:#27ae60">✅ {d["usuario"]}'
+                        f'<span style="color:#999;font-size:0.85em"> {horario}</span></span><br>'
+                    )
+                else:
+                    dest_html += (
+                        f'<span style="color:#e67e22">📭 {d["usuario"]}'
+                        f'<span style="color:#ccc;font-size:0.85em"> não lido</span></span><br>'
+                    )
+
+            linhas += f"""
+        <tr class="detalhe">
+            <td style="padding-left:2rem;font-size:0.9em">{icone} {assunto}</td>
+            <td style="color:#888;font-size:0.85em">{data}</td>
+            <td style="font-size:0.85em">{dest_html}</td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Falaw — Relatório de Emails Enviados</title>
+<style>
+  body {{ font-family: Arial, sans-serif; margin: 2rem; background: #f5f5f5; color: #333; }}
+  h1 {{ color: #2c3e50; }}
+  p.sub {{ color: #777; margin-top: -0.5rem; }}
+  p.aviso {{ color: #e67e22; font-size:0.88em; background:#fff8f0;
+             border-left:3px solid #e67e22; padding:0.4rem 0.8rem; border-radius:4px; }}
+  table {{ border-collapse: collapse; width: 100%; background: #fff; border-radius: 8px;
+           overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.1); }}
+  th {{ background: #2c3e50; color: #fff; padding: 0.7rem 1rem; text-align: left; }}
+  td {{ padding: 0.5rem 1rem; border-bottom: 1px solid #eee; vertical-align:top; }}
+  tr.cabecalho-usuario {{ background: #ecf0f1; }}
+  tr.detalhe {{ background: #fafafa; }}
+  tr.erro {{ background: #fdecea; }}
+  tr:hover {{ background: #f0f4f8; }}
+</style>
+</head>
+<body>
+<h1>📤 Emails Enviados — Falaw Advogados</h1>
+<p class="sub">Gerado em {gerado_em} &nbsp;|&nbsp; Janela: últimas {horas} horas</p>
+<p class="aviso">⚠️ Dados de leitura têm atraso de 1–3 horas na API do Google. Apenas destinatários @falaw.com.br são monitorados.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Assunto</th>
+      <th>Data/Hora envio</th>
+      <th>Destinatários internos — leitura</th>
+    </tr>
+  </thead>
+  <tbody>
+    {linhas}
+  </tbody>
+</table>
+</body>
+</html>"""
+
+    return HTMLResponse(content=html)
