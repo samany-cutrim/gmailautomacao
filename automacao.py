@@ -501,7 +501,21 @@ def classificar_email(email: dict) -> dict:
             "resumo": assunto[:120],
         }
 
-    # ── 1. INTERNO ──────────────────────────────────
+    # ── 1. ALIAS DE CLIENTE @falaw.com.br ───────────
+    # Ex: juridicobancointer@falaw.com.br é uma conta do cliente Inter,
+    # não um colaborador interno — deve ir para o marcador do cliente.
+    cliente_alias = _detectar_cliente_por_alias_falaw(de)
+    if cliente_alias:
+        urgente = _contem(texto_completo, _KW_URGENTE)
+        return {
+            "categoria": "Cliente",
+            "urgente": urgente,
+            "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
+            "cliente": cliente_alias,
+            "resumo": assunto[:120],
+        }
+
+    # ── 2. INTERNO ──────────────────────────────────
     de_interno = "@falaw.com.br" in de.lower()
     para_interno = "@falaw.com.br" in para.lower()
     if de_interno and para_interno:
