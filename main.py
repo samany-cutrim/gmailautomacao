@@ -95,7 +95,7 @@ def relatorio(
             linhas_usuarios += f"""
             <tr class="erro">
                 <td>{usuario}</td>
-                <td colspan="4">Erro: {erro}</td>
+                <td colspan="5">Erro: {erro}</td>
             </tr>"""
             continue
 
@@ -106,24 +106,44 @@ def relatorio(
         cor_urgente = ' style="color:#c0392b;font-weight:bold"' if urgentes > 0 else ""
 
         linhas_usuarios += f"""
-        <tr>
+        <tr class="cabecalho-usuario">
             <td><b>{usuario}</b></td>
             <td style="text-align:center">{total}</td>
             <td style="text-align:center;color:#27ae60">{lidos}</td>
             <td style="text-align:center;color:#e67e22">{nao_lidos}</td>
             <td style="text-align:center"{cor_urgente}>{urgentes}</td>
+            <td></td>
         </tr>"""
 
-        for email in u.get("emails_nao_lidos", []):
-            urgente_badge = ' <span style="color:#c0392b">🚨</span>' if email.get("urgente") else ""
+        for email in u.get("emails", []):
+            urgente_badge = ' 🚨' if email.get("urgente") else ""
+            lido = email.get("lido", False)
+            status_icon = "✅" if lido else "📭"
+            status_cor = "#27ae60" if lido else "#e67e22"
+
+            leituras = email.get("leituras", [])
+            if leituras:
+                leituras_html = "<br>".join(
+                    f'<span style="color:#2980b9">{l["usuario"]}</span>'
+                    f' <span style="color:#999;font-size:0.85em">'
+                    f'{l["horario"][:16].replace("T"," ")}</span>'
+                    for l in leituras
+                )
+            elif lido:
+                leituras_html = '<span style="color:#999;font-size:0.85em">lido (audit pendente)</span>'
+            else:
+                leituras_html = '<span style="color:#ccc;font-size:0.85em">—</span>'
+
             linhas_usuarios += f"""
         <tr class="detalhe">
-            <td style="padding-left:2rem;color:#555;font-size:0.9em" colspan="2">
+            <td style="padding-left:2rem;font-size:0.9em" colspan="2">
+                <span style="color:{status_cor}">{status_icon}</span>
                 {email.get("assunto", "")}{urgente_badge}
             </td>
-            <td style="color:#555;font-size:0.9em">{email.get("de", "")}</td>
-            <td style="color:#888;font-size:0.9em">{email.get("categoria", "")}</td>
-            <td style="color:#888;font-size:0.9em">{email.get("data", "")[:22]}</td>
+            <td style="color:#555;font-size:0.85em">{email.get("de", "")}</td>
+            <td style="color:#888;font-size:0.85em">{email.get("categoria", "")}</td>
+            <td style="color:#888;font-size:0.85em">{email.get("data", "")[:22]}</td>
+            <td style="font-size:0.85em">{leituras_html}</td>
         </tr>"""
 
     html = f"""<!DOCTYPE html>
@@ -136,27 +156,31 @@ def relatorio(
   body {{ font-family: Arial, sans-serif; margin: 2rem; background: #f5f5f5; color: #333; }}
   h1 {{ color: #2c3e50; }}
   p.sub {{ color: #777; margin-top: -0.5rem; }}
+  p.aviso {{ color: #e67e22; font-size:0.88em; background:#fff8f0;
+             border-left:3px solid #e67e22; padding:0.4rem 0.8rem; border-radius:4px; }}
   table {{ border-collapse: collapse; width: 100%; background: #fff; border-radius: 8px;
            overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.1); }}
   th {{ background: #2c3e50; color: #fff; padding: 0.7rem 1rem; text-align: left; }}
-  td {{ padding: 0.55rem 1rem; border-bottom: 1px solid #eee; }}
+  td {{ padding: 0.5rem 1rem; border-bottom: 1px solid #eee; vertical-align:top; }}
+  tr.cabecalho-usuario {{ background: #ecf0f1; }}
   tr.detalhe {{ background: #fafafa; }}
   tr.erro {{ background: #fdecea; }}
-  tr:last-child td {{ border-bottom: none; }}
   tr:hover {{ background: #f0f4f8; }}
 </style>
 </head>
 <body>
 <h1>📬 Relatório de Emails — Falaw Advogados</h1>
 <p class="sub">Gerado em {gerado_em} &nbsp;|&nbsp; Janela: últimas {horas} horas</p>
+<p class="aviso">⚠️ Dados de leitura (quem leu / horário) têm atraso de 1–3 horas na API do Google.</p>
 <table>
   <thead>
     <tr>
-      <th>Usuário</th>
+      <th>Usuário / Email</th>
       <th style="text-align:center">Classificados</th>
       <th style="text-align:center">Lidos</th>
       <th style="text-align:center">Não lidos</th>
-      <th style="text-align:center">Urgentes não lidos</th>
+      <th style="text-align:center">Urgentes n/lidos</th>
+      <th>Quem leu / Horário</th>
     </tr>
   </thead>
   <tbody>

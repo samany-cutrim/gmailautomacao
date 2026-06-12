@@ -115,6 +115,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.labels",
     "https://www.googleapis.com/auth/admin.directory.user.readonly",
+    "https://www.googleapis.com/auth/admin.reports.audit.readonly",
 ]
 
 
@@ -138,6 +139,11 @@ def get_gmail_service(user_email: str):
 def get_admin_service():
     creds = get_credentials(CONFIG["ADMIN_USER"])
     return build("admin", "directory_v1", credentials=creds, cache_discovery=False)
+
+
+def get_reports_service():
+    creds = get_credentials(CONFIG["ADMIN_USER"])
+    return build("admin", "reports_v1", credentials=creds, cache_discovery=False)
 
 
 # ──────────────────────────────────────────────
@@ -756,10 +762,47 @@ def _categoria_do_email(label_ids: list, id_para_nome: dict) -> str:
 
 def gerar_relatorio(horas: int = 24) -> list:
     """
-    Para cada usuário do domínio, retorna quantos emails classificados
-    nas últimas X horas ainda estão não lidos, com detalhes.
+    Para cada usuário do domínio, retorna emails classificados nas últimas X horas
+    com informação de quem leu e quando (via Admin Reports API).
+    Nota: dados de audit têm atraso de 1-3 horas.
     """
     usuarios = listar_usuarios()
+
+    # ── Busca eventos de leitura da Reports API (uma chamada para o domínio todo) ──
+    # Indexado por message_id → lista de {usuario, horario}
+    leituras_por_msg: dict[str, list] = {}
+    try:
+        reports = get_reports_service()
+        depois = datetime.now(timezone.utc) - timedelta(hours=horas)
+        start_time = depois.strftime("%Y-%m-%dT%H:%M:%SZ")
+        request = reports.activities().list(
+            userKey="all",
+            applicationName="gmail",
+            eventName="message_read",
+            startTime=start_time,
+            maxResults=1000,
+        )
+        while request is not None:
+            resp = request.execute()
+            for activity in resp.get("items", []):
+                actor = activity.get("actor", {}).get("email", "")
+                horario = activity.get("id", {}).get("time", "")
+                for event in activity.get("events", []):
+                    for param in event.get("parameters", []):
+                        if param.get("name") == "message_id":
+                            mid = param.get("value", "")
+                            if mid:
+                                if mid not in leituras_por_msg:
+                                    leituras_por_msg[mid] = []
+                                leituras_por_msg[mid].append({
+                                    "usuario": actor,
+                                    "horario": horario,
+                                })
+            request = reports.activities().list_next(request, resp)
+        log.info(f"Audit: {len(leituras_por_msg)} mensagens com evento de leitura.")
+    except Exception as e:
+        log.warning(f"Reports API indisponível ou sem dados ainda: {e}")
+
     relatorio = []
 
     for user_email in usuarios:
@@ -770,7 +813,7 @@ def gerar_relatorio(horas: int = 24) -> list:
             depois = datetime.now(timezone.utc) - timedelta(hours=horas)
             timestamp = int(depois.timestamp())
 
-            def _contar(query):
+            def _listar(query):
                 try:
                     r = service.users().messages().list(
                         userId="me", q=query, maxResults=200
@@ -779,13 +822,15 @@ def gerar_relatorio(horas: int = 24) -> list:
                 except Exception:
                     return []
 
-            todos_msgs     = _contar(f'label:Falaw after:{timestamp}')
-            nao_lidos_msgs = _contar(f'label:Falaw is:unread after:{timestamp}')
-            urgentes_msgs  = _contar(f'label:"Falaw/⚠️ URGENTE" is:unread')
+            todos_msgs     = _listar(f'label:Falaw after:{timestamp}')
+            nao_lidos_msgs = _listar(f'label:Falaw is:unread after:{timestamp}')
+            urgentes_msgs  = _listar(f'label:"Falaw/⚠️ URGENTE" is:unread')
 
-            # Detalhes dos não lidos
-            detalhes = []
-            for msg_ref in nao_lidos_msgs[:50]:
+            nao_lidos_ids = {m["id"] for m in nao_lidos_msgs}
+
+            # Detalha TODOS os emails classificados (lidos e não lidos)
+            emails = []
+            for msg_ref in todos_msgs[:100]:
                 try:
                     msg = service.users().messages().get(
                         userId="me", id=msg_ref["id"],
@@ -798,12 +843,19 @@ def gerar_relatorio(horas: int = 24) -> list:
                         "⚠️ URGENTE" in id_para_nome.get(lid, "")
                         for lid in label_ids
                     )
-                    detalhes.append({
+                    nao_lido = msg_ref["id"] in nao_lidos_ids
+
+                    # Leituras do audit para este message_id
+                    leituras = leituras_por_msg.get(msg_ref["id"], [])
+
+                    emails.append({
                         "assunto": hdrs.get("Subject", "(sem assunto)")[:100],
                         "de": hdrs.get("From", "")[:80],
                         "data": hdrs.get("Date", ""),
                         "categoria": _categoria_do_email(label_ids, id_para_nome),
                         "urgente": urgente,
+                        "lido": not nao_lido,
+                        "leituras": leituras,  # [{usuario, horario}, ...]
                     })
                 except Exception:
                     pass
@@ -815,15 +867,12 @@ def gerar_relatorio(horas: int = 24) -> list:
                 "total_lidos": len(todos_msgs) - len(nao_lidos_msgs),
                 "total_nao_lidos": len(nao_lidos_msgs),
                 "total_urgentes_nao_lidos": len(urgentes_msgs),
-                "emails_nao_lidos": detalhes,
+                "emails": emails,
             })
 
         except Exception as e:
             log.error(f"Erro ao gerar relatório para {user_email}: {e}")
-            relatorio.append({
-                "usuario": user_email,
-                "erro": str(e),
-            })
+            relatorio.append({"usuario": user_email, "erro": str(e)})
 
         time.sleep(1)
 
