@@ -310,6 +310,24 @@ _KW_PROPAGANDA = [
     "clique para descadastrar", "remover da lista",
 ]
 
+# Prefixos de assunto de e-mails de sistema (Benner, Projuris, tribunais, etc.)
+# Esses e-mails devem sempre ser classificados como Interno, independente do remetente.
+_ASSUNTO_SISTEMA = [
+    "nova providência de pasta",
+    "nova providencia de pasta",
+    "notificação comentário projuris",
+    "notificacao comentario projuris",
+    "notificação tarefa evento projuris",
+    "notificacao tarefa evento projuris",
+    "confirmar a responsabilidadade da pasta",
+    "confirmar a responsabilidade da pasta",
+    "retirada de pastas sob sua responsabilidade",
+    "andamento processual",
+    "novo compromisso -",
+    "instabilidade temporária no canal",
+    "instabilidade temporaria no canal",
+]
+
 _KW_URGENTE = [
     "urgente", "urgência", "urgencia", "prazo fatal", "penhora",
     "bloqueio", "liminar", "tutela", "bacenjud", "renajud",
@@ -359,38 +377,59 @@ _DOMINIOS_CLIENTES = {
     "solinftec.com":    "Solinftec",
 }
 
-# Fragmentos de texto (assunto/corpo) para detectar clientes
-_TEXTO_CLIENTES = {
-    "apdata":       "Apdata",
-    "baymetrics":   "Baymetrics",
-    "bipa":         "Bipa",
-    "buser":        "Buser",
-    "cuidar.me":    "Cuidar.me",
-    "dr. consulta": "Cuidar.me",
-    "dr consulta":  "Cuidar.me",
-    "digibee":      "Digibee",
-    "cargox":       "CargoX",
-    "frete.com":    "CargoX",
-    " gft ":        "GFT",
-    "grupo dória":  "Grupo Dória",
-    "grupo doria":  "Grupo Dória",
-    "gupy":         "Gupy",
-    "hubees":       "Hubees",
-    "ifood":        "Ifood",
-    " kpg ":        "KPG",
-    "lemon energy": "Lemon",
-    " musa ":       "Musa",
-    "nuvemshop":    "Nuvemshop",
-    "peg&pet":      "Peg&Pet",
-    "peg e pet":    "Peg&Pet",
-    "pier.digital": "Pier",
-    "banco inter":  "Inter",
-    "pravaler":     "Pravaler",
-    "quero edu":    "Quero",
-    "rabbot":       "Rabbot",
-    "safira":       "Safira",
-    "solinftec":    "Solinftec",
+# Fragmentos de texto (assunto) para detectar clientes
+# ATENÇÃO: usar termos específicos para evitar falsos positivos.
+# Palavras curtas e ambíguas (ex: "inter", "musa", "gupy") SÓ no assunto, não no corpo.
+_TEXTO_CLIENTES_ASSUNTO = {
+    "apdata":        "Apdata",
+    "baymetrics":    "Baymetrics",
+    "bipa":          "Bipa",
+    "buser":         "Buser",
+    "cuidar.me":     "Cuidar.me",
+    "dr. consulta":  "Cuidar.me",
+    "dr consulta":   "Cuidar.me",
+    "digibee":       "Digibee",
+    "cargox":        "CargoX",
+    " gft ":         "GFT",
+    "grupo dória":   "Grupo Dória",
+    "grupo doria":   "Grupo Dória",
+    "gupy":          "Gupy",
+    "hubees":        "Hubees",
+    "ifood":         "Ifood",
+    " kpg ":         "KPG",
+    "lemon energy":  "Lemon",
+    " musa ":        "Musa",
+    "nuvemshop":     "Nuvemshop",
+    "peg&pet":       "Peg&Pet",
+    "peg e pet":     "Peg&Pet",
+    "pier.digital":  "Pier",
+    "banco inter":   "Inter",
+    "pravaler":      "Pravaler",
+    "quero edu":     "Quero",
+    "rabbot":        "Rabbot",
+    "safira":        "Safira",
+    "solinftec":     "Solinftec",
 }
+
+# No corpo, usar apenas fragmentos inequívocos (domínios, nomes completos)
+_TEXTO_CLIENTES_CORPO = {
+    "apdata":          "Apdata",
+    "baymetrics":      "Baymetrics",
+    "digibee":         "Digibee",
+    "cargox":          "CargoX",
+    "grupo dória":     "Grupo Dória",
+    "grupo doria":     "Grupo Dória",
+    "hubees":          "Hubees",
+    "ifood":           "Ifood",
+    "nuvemshop":       "Nuvemshop",
+    "peg&pet":         "Peg&Pet",
+    "banco inter":     "Inter",
+    "pravaler":        "Pravaler",
+    "solinftec":       "Solinftec",
+}
+
+# mantido por compatibilidade (usado em _detectar_cliente)
+_TEXTO_CLIENTES = _TEXTO_CLIENTES_ASSUNTO
 
 
 def _contem(texto: str, palavras: list) -> bool:
@@ -415,10 +454,16 @@ def _detectar_cliente(de: str, assunto: str, corpo: str) -> str | None:
         return cliente
 
     # 2. Verifica domínio do remetente
-    # 3. Verifica texto no assunto e corpo
-    texto = (assunto + " " + corpo[:1000]).lower()
-    for fragmento, nome in _TEXTO_CLIENTES.items():
-        if fragmento in texto:
+    # 3. Verifica assunto (termos curtos permitidos aqui)
+    assunto_lower = assunto.lower()
+    for fragmento, nome in _TEXTO_CLIENTES_ASSUNTO.items():
+        if fragmento in assunto_lower:
+            return nome
+
+    # 4. Verifica corpo (apenas termos inequívocos)
+    corpo_lower = corpo[:1000].lower()
+    for fragmento, nome in _TEXTO_CLIENTES_CORPO.items():
+        if fragmento in corpo_lower:
             return nome
 
     return None
@@ -431,6 +476,30 @@ def classificar_email(email: dict) -> dict:
     assunto = email.get("assunto", "")
     corpo = email.get("corpo", "")
     texto_completo = assunto + " " + corpo
+    assunto_lower = assunto.lower()
+
+    # ── 0. E-MAILS DE SISTEMA ───────────────────────────────
+    # Notificações de Benner, Projuris, tribunais: sempre Interno
+    if any(assunto_lower.startswith(p) or p in assunto_lower for p in _ASSUNTO_SISTEMA):
+        urgente = _contem(texto_completo, _KW_URGENTE)
+        return {
+            "categoria": "Interno",
+            "urgente": urgente,
+            "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
+            "cliente": None,
+            "resumo": assunto[:120],
+        }
+
+    # ── 0b. NEWSLETTER INTERNA ───────────────────────────────
+    # Newsletters enviadas pelo próprio escritório → Propaganda
+    if "newsletter" in assunto_lower or "informativo |" in assunto_lower:
+        return {
+            "categoria": "Propaganda",
+            "urgente": False,
+            "motivo_urgencia": None,
+            "cliente": None,
+            "resumo": assunto[:120],
+        }
 
     # ── 1. INTERNO ──────────────────────────────────
     de_interno = "@falaw.com.br" in de.lower()
