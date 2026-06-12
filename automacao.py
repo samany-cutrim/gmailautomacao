@@ -11,6 +11,7 @@ import os
 import json
 import base64
 import logging
+import time
 from datetime import datetime, timezone, timedelta
 
 from openai import OpenAI
@@ -178,17 +179,26 @@ def garantir_marcadores(service, user_email: str) -> dict:
         ids = {}
         for nome_marcador in sorted(necessarios):  # ordena para criar pais primeiro
             if nome_marcador not in existentes:
-                novo = service.users().labels().create(
-                    userId="me",
-                    body={
-                        "name": nome_marcador,
-                        "labelListVisibility": "labelShow",
-                        "messageListVisibility": "show",
-                    }
-                ).execute()
-                existentes[nome_marcador] = novo["id"]
-                log.info(f"  [{user_email}] Marcador criado: {nome_marcador}")
-            ids[nome_marcador] = existentes[nome_marcador]
+                try:
+                    novo = service.users().labels().create(
+                        userId="me",
+                        body={
+                            "name": nome_marcador,
+                            "labelListVisibility": "labelShow",
+                            "messageListVisibility": "show",
+                        }
+                    ).execute()
+                    existentes[nome_marcador] = novo["id"]
+                    log.info(f"  [{user_email}] Marcador criado: {nome_marcador}")
+                except HttpError as e:
+                    if e.resp.status == 409:
+                        # Marcador já existe — recarrega lista para obter o ID
+                        result = service.users().labels().list(userId="me").execute()
+                        existentes = {l["name"]: l["id"] for l in result.get("labels", [])}
+                    else:
+                        raise
+            if nome_marcador in existentes:
+                ids[nome_marcador] = existentes[nome_marcador]
 
         return ids
     except Exception as e:
@@ -437,6 +447,7 @@ def executar() -> dict:
 
     for user_email in usuarios:
         resultados.append(processar_usuario(user_email))
+        time.sleep(5)  # pausa entre usuários para não estourar rate limit
 
     resumo = {
         "executado_em": inicio.isoformat(),
