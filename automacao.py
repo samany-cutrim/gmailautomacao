@@ -550,12 +550,6 @@ def aplicar_marcadores(service, msg_id: str, classificacao: dict, label_ids: dic
         if nome_marcador in label_ids:
             labels_para_adicionar.append(label_ids[nome_marcador])
 
-        # Adiciona também o marcador do cliente se identificado em qualquer categoria
-        if cliente and cliente in CLIENTES_CONHECIDOS and categoria != "Cliente":
-            marcador_cliente = CLIENTES_CONHECIDOS[cliente]
-            if marcador_cliente in label_ids and label_ids[marcador_cliente] not in labels_para_adicionar:
-                labels_para_adicionar.append(label_ids[marcador_cliente])
-
         if urgente and MARCADORES["URGENTE"] in label_ids:
             labels_para_adicionar.append(label_ids[MARCADORES["URGENTE"]])
             labels_para_adicionar.append("STARRED")
