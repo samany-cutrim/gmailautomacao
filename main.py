@@ -68,15 +68,19 @@ def run(x_run_token: str = Header(default="")):
 @app.get("/relatorio", response_class=HTMLResponse)
 def relatorio(
     x_run_token: str = Header(default=""),
+    token: str = Query(default=""),
     horas: int = Query(default=24, ge=1, le=168),
 ):
     """
     Relatório de emails classificados vs lidos por usuário.
-    Parâmetro ?horas=24 (padrão) — janela de tempo analisada.
+    Autenticação: header X-Run-Token ou parâmetro ?token=
+    Parâmetro opcional: ?horas=24
     """
     if not RUN_TOKEN:
         raise HTTPException(status_code=500, detail="RUN_TOKEN não configurado no servidor.")
-    if x_run_token != RUN_TOKEN:
+    # Aceita token via header ou via query string
+    token_recebido = x_run_token or token
+    if token_recebido != RUN_TOKEN:
         raise HTTPException(status_code=401, detail="Token inválido.")
 
     try:
