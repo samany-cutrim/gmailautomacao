@@ -75,6 +75,17 @@ APELIDOS_CLIENTES = {
     "Banco Inter": "Inter",
 }
 
+# Prefixos de email @falaw.com.br que pertencem a contas de clientes específicos
+# Ex: juridicobancointer@falaw.com.br → cliente Inter
+ALIAS_FALAW_CLIENTES = {
+    "juridicobancointer": "Inter",
+    "juridico.inter":     "Inter",
+    "juridicobuser":      "Buser",
+    "juridicoifood":      "Ifood",
+    "juridicogft":        "GFT",
+    "juridicogupy":       "Gupy",
+}
+
 MARCADORES = {
     "Consultivo":      "Falaw/Consultivo",
     "Audiencias":      "Falaw/Audiências",
@@ -284,17 +295,19 @@ _KW_CONSULTIVO = [
     "orientacao juridica", "dúvida jurídica", "duvida juridica",
     "me informe", "gostaria de saber", "poderia me informar",
     "preciso de orientação", "preciso de orientacao",
+    "consultivo",  # assunto explicitamente marcado como consultivo
 ]
 
+# Propaganda: palavras que identificam marketing/spam inequivocamente
+# (evitar termos genéricos que aparecem em emails de sistema jurídico)
 _KW_PROPAGANDA = [
-    "unsubscribe", "descadastrar", "cancelar inscrição",
-    "newsletter", "promoção", "promocao", "oferta especial",
-    "clique aqui", "saiba mais", "acesse agora", "curso",
+    "unsubscribe", "descadastrar", "cancelar inscrição", "cancelar inscricao",
+    "newsletter", "email marketing", "e-mail marketing",
+    "oferta especial", "promoção exclusiva", "promocao exclusiva",
     "webinar", "workshop", "evento gratuito", "evento pago",
-    "patrocinado", "publicidade", "marketing",
-    "não responda este e-mail", "nao responda este e-mail",
-    "este é um e-mail automático", "este e um e-mail automatico",
-    "email marketing",
+    "patrocinado", "publicidade",
+    "você foi selecionado", "voce foi selecionado",
+    "clique para descadastrar", "remover da lista",
 ]
 
 _KW_URGENTE = [
@@ -310,6 +323,9 @@ _KW_URGENTE = [
 # Chave: fragmento que pode aparecer no campo "De:" ou no assunto/corpo
 # Valor: nome canônico em CLIENTES_CONHECIDOS
 _DOMINIOS_CLIENTES = {
+    # aliases internos @falaw.com.br de contas de clientes
+    "juridicobancointer@falaw": "Inter",
+    "juridico.inter@falaw":     "Inter",
     # por domínio de email
     "apdata.com":       "Apdata",
     "baymetrics.com":   "Baymetrics",
@@ -382,13 +398,24 @@ def _contem(texto: str, palavras: list) -> bool:
     return any(p in t for p in palavras)
 
 
+def _detectar_cliente_por_alias_falaw(de: str) -> str | None:
+    """Detecta clientes por alias @falaw.com.br (ex: juridicobancointer@falaw.com.br)."""
+    de_lower = de.lower()
+    for prefixo, cliente in ALIAS_FALAW_CLIENTES.items():
+        if prefixo in de_lower:
+            return cliente
+    return None
+
+
 def _detectar_cliente(de: str, assunto: str, corpo: str) -> str | None:
     """Retorna o nome canônico do cliente detectado, ou None."""
-    de_lower = de.lower()
-    for fragmento, nome in _DOMINIOS_CLIENTES.items():
-        if fragmento in de_lower:
-            return nome
+    # 1. Verifica alias @falaw.com.br de contas de clientes
+    cliente = _detectar_cliente_por_alias_falaw(de)
+    if cliente:
+        return cliente
 
+    # 2. Verifica domínio do remetente
+    # 3. Verifica texto no assunto e corpo
     texto = (assunto + " " + corpo[:1000]).lower()
     for fragmento, nome in _TEXTO_CLIENTES.items():
         if fragmento in texto:
@@ -409,6 +436,17 @@ def classificar_email(email: dict) -> dict:
     de_interno = "@falaw.com.br" in de.lower()
     para_interno = "@falaw.com.br" in para.lower()
     if de_interno and para_interno:
+        # Se o assunto indica explicitamente que é consultivo, prioriza essa categoria
+        if "consultivo" in assunto.lower():
+            cliente = _detectar_cliente(de, assunto, corpo)
+            urgente = _contem(texto_completo, _KW_URGENTE)
+            return {
+                "categoria": "Consultivo",
+                "urgente": urgente,
+                "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
+                "cliente": cliente,
+                "resumo": assunto[:120],
+            }
         categoria = "Interno"
         cliente = _detectar_cliente(de, assunto, corpo)
         urgente = _contem(texto_completo, _KW_URGENTE)
