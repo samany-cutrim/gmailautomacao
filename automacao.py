@@ -96,6 +96,7 @@ MARCADORES_LEGADOS = [
     "Falaw/Clientes/Solinftec",
     "Falaw/Clientes",
     "Falaw/Newslatter",  # typo antigo
+    "Newslatter",        # marcador criado sem prefixo Falaw
     # novos marcadores atuais (caso já existam e precisem ser removidos)
     *TODOS_MARCADORES,
     "Falaw",  # pai raiz
@@ -436,9 +437,10 @@ def executar() -> dict:
 # REMOVER TODOS OS MARCADORES DE TODOS OS EMAILS
 # ──────────────────────────────────────────────
 def remover_todos_marcadores_usuario(user_email: str) -> dict:
-    """Remove todos os marcadores do código dos emails e os exclui da conta."""
+    """Exclui da conta todos os marcadores criados pelo código (atuais + legados).
+    A API do Gmail remove automaticamente o marcador de todos os emails ao excluí-lo."""
     log.info(f"Removendo marcadores de: {user_email}")
-    stats = {"usuario": user_email, "emails_modificados": 0, "erros": 0}
+    stats = {"usuario": user_email, "marcadores_excluidos": 0, "erros": 0}
 
     try:
         service = get_gmail_service(user_email)
@@ -455,46 +457,19 @@ def remover_todos_marcadores_usuario(user_email: str) -> dict:
             log.info(f"  [{user_email}] Nenhum marcador do código encontrado.")
             return stats
 
-        log.info(f"  [{user_email}] {len(labels_encontradas)} marcador(es) encontrado(s): {list(labels_encontradas.keys())}")
+        log.info(f"  [{user_email}] {len(labels_encontradas)} marcador(es) encontrado(s).")
 
-        # Para cada marcador individualmente: remove dos emails e depois exclui
+        # Exclui cada marcador diretamente — a API remove automaticamente dos emails
         for nome, label_id in labels_encontradas.items():
-            # 1. Remove o marcador de todos os emails que o possuem
-            page_token = None
-            while True:
-                kwargs = {"userId": "me", "labelIds": [label_id], "maxResults": 500}
-                if page_token:
-                    kwargs["pageToken"] = page_token
-                res = service.users().messages().list(**kwargs).execute()
-                msgs = res.get("messages", [])
-
-                if msgs:
-                    # Batch: remove de todos de uma vez
-                    for msg_ref in msgs:
-                        try:
-                            service.users().messages().modify(
-                                userId="me",
-                                id=msg_ref["id"],
-                                body={"removeLabelIds": [label_id]},
-                            ).execute()
-                            stats["emails_modificados"] += 1
-                        except Exception as e:
-                            log.error(f"  Erro ao modificar email {msg_ref['id']}: {e}")
-                            stats["erros"] += 1
-
-                page_token = res.get("nextPageToken")
-                if not page_token:
-                    break
-
-            # 2. Exclui o marcador da conta
             try:
                 service.users().labels().delete(userId="me", id=label_id).execute()
-                log.info(f"  [{user_email}] Marcador excluído: {nome}")
+                stats["marcadores_excluidos"] += 1
+                log.info(f"  [{user_email}] ✓ Excluído: {nome}")
             except HttpError as e:
                 if e.resp.status == 400:
-                    pass  # marcadores de sistema não podem ser excluídos
+                    log.info(f"  [{user_email}] Ignorado (sistema): {nome}")
                 else:
-                    log.error(f"  Erro ao excluir marcador '{nome}': {e}")
+                    log.error(f"  [{user_email}] Erro ao excluir '{nome}': {e}")
                     stats["erros"] += 1
 
     except HttpError as e:
@@ -504,7 +479,7 @@ def remover_todos_marcadores_usuario(user_email: str) -> dict:
         log.error(f"Erro inesperado para {user_email}: {e}")
         stats["erros"] += 1
 
-    log.info(f"  [{user_email}] {stats['emails_modificados']} email(s) modificado(s).")
+    log.info(f"  [{user_email}] {stats['marcadores_excluidos']} marcador(es) excluído(s).")
     return stats
 
 
@@ -526,7 +501,7 @@ def remover_todos_marcadores() -> dict:
         "executado_em": inicio.isoformat(),
         "duracao_segundos": (datetime.now() - inicio).total_seconds(),
         "usuarios_processados": len(usuarios),
-        "total_emails_modificados": sum(r["emails_modificados"] for r in resultados),
+        "total_marcadores_excluidos": sum(r["marcadores_excluidos"] for r in resultados),
         "total_erros": sum(r["erros"] for r in resultados),
         "detalhes": resultados,
     }
