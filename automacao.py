@@ -437,7 +437,8 @@ def executar() -> dict:
 # REMOVER TODOS OS MARCADORES DE TODOS OS EMAILS
 # ──────────────────────────────────────────────
 def remover_todos_marcadores_usuario(user_email: str) -> dict:
-    """Exclui da conta todos os marcadores criados pelo código (atuais + legados).
+    """Exclui da conta apenas os marcadores criados pelo código (atuais + legados).
+    Marcadores criados manualmente pelo usuário são sempre preservados.
     A API do Gmail remove automaticamente o marcador de todos os emails ao excluí-lo."""
     log.info(f"Removendo marcadores de: {user_email}")
     stats = {"usuario": user_email, "marcadores_excluidos": 0, "erros": 0}
@@ -445,21 +446,40 @@ def remover_todos_marcadores_usuario(user_email: str) -> dict:
     try:
         service = get_gmail_service(user_email)
 
-        # Obtém IDs apenas dos marcadores que o código criou (atuais + legados)
-        nomes_para_remover = set(MARCADORES_LEGADOS)
+        # Lista todos os marcadores da conta
         result = service.users().labels().list(userId="me").execute()
+        todos_labels = result.get("labels", [])
+
+        # Somente nomes explicitamente criados pelo código são candidatos à exclusão
+        nomes_para_remover = set(MARCADORES_LEGADOS)
+
         labels_encontradas = {
-            l["name"]: l["id"] for l in result.get("labels", [])
+            l["name"]: l["id"] for l in todos_labels
             if l["name"] in nomes_para_remover
         }
+
+        # Proteção extra para o label pai "Falaw": só exclui se não houver
+        # sub-labels manuais (criados pelo usuário) embaixo dele.
+        if "Falaw" in labels_encontradas:
+            nomes_existentes = {l["name"] for l in todos_labels}
+            sub_labels_manuais = [
+                nome for nome in nomes_existentes
+                if nome.startswith("Falaw/") and nome not in nomes_para_remover
+            ]
+            if sub_labels_manuais:
+                log.info(
+                    f"  [{user_email}] Preservando 'Falaw' — sub-labels manuais detectadas: "
+                    f"{sub_labels_manuais}"
+                )
+                del labels_encontradas["Falaw"]
 
         if not labels_encontradas:
             log.info(f"  [{user_email}] Nenhum marcador do código encontrado.")
             return stats
 
-        log.info(f"  [{user_email}] {len(labels_encontradas)} marcador(es) encontrado(s).")
+        log.info(f"  [{user_email}] {len(labels_encontradas)} marcador(es) para excluir.")
 
-        # Exclui cada marcador diretamente — a API remove automaticamente dos emails
+        # Exclui cada marcador — a API remove automaticamente dos emails
         for nome, label_id in labels_encontradas.items():
             try:
                 service.users().labels().delete(userId="me", id=label_id).execute()
@@ -506,7 +526,7 @@ def remover_todos_marcadores() -> dict:
         "detalhes": resultados,
     }
 
-    log.info(f"Concluído: {resumo['total_emails_modificados']} email(s) sem marcadores.")
+    log.info(f"Concluído: {resumo['total_marcadores_excluidos']} marcador(es) excluído(s).")
     return resumo
 
 
