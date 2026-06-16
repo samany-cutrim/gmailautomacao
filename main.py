@@ -62,3 +62,23 @@ def run(x_run_token: str = Header(default="")):
         log.error(f"Erro na execução: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/remove-labels")
+def remove_labels(x_run_token: str = Header(default="")):
+    """
+    Remove todos os marcadores Falaw de todos os emails de todos os usuários.
+    Protegido pelo mesmo token X-Run-Token.
+    """
+    if not RUN_TOKEN:
+        raise HTTPException(status_code=500, detail="RUN_TOKEN não configurado no servidor.")
+
+    if x_run_token != RUN_TOKEN:
+        raise HTTPException(status_code=401, detail="Token inválido.")
+
+    try:
+        resumo = automacao.remover_todos_marcadores()
+        return JSONResponse(content=resumo)
+    except Exception as e:
+        log.error(f"Erro ao remover marcadores: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+

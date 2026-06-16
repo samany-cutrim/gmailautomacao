@@ -707,5 +707,100 @@ def executar() -> dict:
     return resumo
 
 
+# ──────────────────────────────────────────────
+# REMOVER TODOS OS MARCADORES DE TODOS OS EMAILS
+# ──────────────────────────────────────────────
+def remover_todos_marcadores_usuario(user_email: str) -> dict:
+    """Remove todos os marcadores Falaw de todos os emails de um usuário."""
+    log.info(f"Removendo marcadores de: {user_email}")
+    stats = {"usuario": user_email, "emails_modificados": 0, "erros": 0}
+
+    try:
+        service = get_gmail_service(user_email)
+
+        # Monta o conjunto completo de nomes de marcadores criados pelo código
+        # (inclui os marcadores-pai, ex: "Falaw", "Falaw/Clientes")
+        nomes_criados = set()
+        for nome in TODOS_MARCADORES:
+            partes = nome.split("/")
+            for i in range(1, len(partes) + 1):
+                nomes_criados.add("/".join(partes[:i]))
+
+        # Obtém IDs apenas dos marcadores que constam na lista do código
+        result = service.users().labels().list(userId="me").execute()
+        falaw_label_ids = [
+            l["id"] for l in result.get("labels", [])
+            if l["name"] in nomes_criados
+        ]
+
+        if not falaw_label_ids:
+            log.info(f"  [{user_email}] Nenhum marcador Falaw encontrado.")
+            return stats
+
+        log.info(f"  [{user_email}] {len(falaw_label_ids)} marcador(es) Falaw encontrado(s).")
+
+        # Busca todos os emails que possuem pelo menos um desses marcadores
+        page_token = None
+        while True:
+            kwargs = {"userId": "me", "labelIds": falaw_label_ids, "maxResults": 500}
+            if page_token:
+                kwargs["pageToken"] = page_token
+            res = service.users().messages().list(**kwargs).execute()
+            msgs = res.get("messages", [])
+
+            for msg_ref in msgs:
+                try:
+                    service.users().messages().modify(
+                        userId="me",
+                        id=msg_ref["id"],
+                        body={"removeLabelIds": falaw_label_ids},
+                    ).execute()
+                    stats["emails_modificados"] += 1
+                except Exception as e:
+                    log.error(f"  Erro ao modificar email {msg_ref['id']}: {e}")
+                    stats["erros"] += 1
+
+            page_token = res.get("nextPageToken")
+            if not page_token:
+                break
+
+    except HttpError as e:
+        log.error(f"Erro HTTP para {user_email}: {e}")
+        stats["erros"] += 1
+    except Exception as e:
+        log.error(f"Erro inesperado para {user_email}: {e}")
+        stats["erros"] += 1
+
+    log.info(f"  [{user_email}] {stats['emails_modificados']} email(s) modificado(s).")
+    return stats
+
+
+def remover_todos_marcadores() -> dict:
+    """Remove todos os marcadores Falaw de todos os emails de todos os usuários."""
+    inicio = datetime.now()
+    log.info("=" * 60)
+    log.info(f"Removendo marcadores — {inicio.strftime('%d/%m/%Y %H:%M')}")
+    log.info("=" * 60)
+
+    usuarios = listar_usuarios()
+    resultados = []
+
+    for user_email in usuarios:
+        resultados.append(remover_todos_marcadores_usuario(user_email))
+        time.sleep(0.5)
+
+    resumo = {
+        "executado_em": inicio.isoformat(),
+        "duracao_segundos": (datetime.now() - inicio).total_seconds(),
+        "usuarios_processados": len(usuarios),
+        "total_emails_modificados": sum(r["emails_modificados"] for r in resultados),
+        "total_erros": sum(r["erros"] for r in resultados),
+        "detalhes": resultados,
+    }
+
+    log.info(f"Concluído: {resumo['total_emails_modificados']} email(s) sem marcadores.")
+    return resumo
+
+
 if __name__ == "__main__":
     executar()
