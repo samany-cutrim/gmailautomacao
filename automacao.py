@@ -64,21 +64,70 @@ TODOS_MARCADORES = list(GRUPOS.values())
 # Palavras-chave por marcador — usadas para classificar emails quando o grupo
 # não aparece no To/Cc. Adicione ou remova palavras conforme necessário.
 PALAVRAS_CHAVE_GRUPOS = {
-    "Falaw/Advogados Falaw":               ["advogados falaw", "falaw advogados"],
-    "Falaw/Buser Trabalhista":             ["buser"],
-    "Falaw/Consultivo Geral":             ["consultivo"],
-    "Falaw/Contencioso LOFT Trabalhista": ["loft"],
-    "Falaw/Controladoria FALAW":          ["controladoria"],
-    "Falaw/Frete Trabalhista":            ["frete", "cargox", "cargo x"],
-    "Falaw/Ifood":                        ["ifood"],
-    "Falaw/INDRIVE Litigation":           ["indrive"],
-    "Falaw/Interpag Trabalhista":         ["interpag"],
-    "Falaw/Jurimetria":                   ["jurimetria"],
-    "Falaw/Lalamove":                     ["lalamove"],
-    "Falaw/Newsletter":                   ["newsletter", "newslatter"],
-    "Falaw/Pravaler":                     ["pravaler"],
-    "Falaw/Sindical FA":                  ["sindical"],
-    # "Falaw/FA GERAL" omitido — termos muito genéricos causariam falsos positivos
+    # Comunicações internas da equipe de advogados
+    "Falaw/Advogados Falaw": [
+        "advogados falaw", "falaw advogados", "equipe falaw",
+    ],
+    # Cliente Buser (transporte de passageiros)
+    "Falaw/Buser Trabalhista": [
+        "buser",
+    ],
+    # Pareceres e consultas jurídicas gerais
+    "Falaw/Consultivo Geral": [
+        "consultivo", "parecer jurídico", "parecer juridico",
+        "consulta jurídica", "consulta juridica", "consultivo geral",
+    ],
+    # Cliente LOFT (fintech imobiliária)
+    "Falaw/Contencioso LOFT Trabalhista": [
+        "loft",
+    ],
+    # Financeiro e controladoria interna da Falaw
+    "Falaw/Controladoria FALAW": [
+        "controladoria", "controladoria falaw",
+    ],
+    # Assuntos gerais da FA (usar com cuidado — termos podem ser amplos)
+    "Falaw/FA GERAL": [
+        "fa geral", "falaw geral",
+    ],
+    # Cliente Frete/CargoX (logística)
+    "Falaw/Frete Trabalhista": [
+        "frete", "cargox", "cargo x",
+    ],
+    # Cliente iFood (delivery de comida)
+    "Falaw/Ifood": [
+        "ifood", "i-food",
+    ],
+    # Cliente InDrive (transporte por aplicativo)
+    "Falaw/INDRIVE Litigation": [
+        "indrive", "in drive", "indriver",
+    ],
+    # Cliente Interpag (pagamentos)
+    "Falaw/Interpag Trabalhista": [
+        "interpag",
+    ],
+    # Área de jurimetria e análise de dados jurídicos
+    "Falaw/Jurimetria": [
+        "jurimetria",
+    ],
+    # Cliente Lalamove (logística/entregas)
+    "Falaw/Lalamove": [
+        "lalamove", "lala move",
+    ],
+    # Newsletter/informativos enviados pelo escritório
+    "Falaw/Newsletter": [
+        "newsletter", "newslatter", "boletim informativo", "informativo falaw",
+    ],
+    # Cliente Pravaler (crédito educacional)
+    "Falaw/Pravaler": [
+        "pravaler",
+    ],
+    # Área sindical e negociações coletivas
+    "Falaw/Sindical FA": [
+        "sindical", "sindicato", "acordo coletivo",
+        "convenção coletiva", "convencao coletiva",
+        "negociação coletiva", "negociacao coletiva",
+        "dissídio coletivo", "dissidio coletivo",
+    ],
 }
 
 # Marcadores criados por versões anteriores do código (para limpeza completa)
