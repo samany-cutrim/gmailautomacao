@@ -61,6 +61,46 @@ USUARIO_EXCLUIDO = "tatiana@falaw.com.br"
 # Lista de todos os marcadores a criar (inclui pais gerados em garantir_marcadores)
 TODOS_MARCADORES = list(GRUPOS.values())
 
+# Marcadores criados por versões anteriores do código (para limpeza completa)
+MARCADORES_LEGADOS = [
+    "Falaw/⚠️ URGENTE",
+    "Falaw/Audiências",
+    "Falaw/Propaganda",
+    "Falaw/Interno",
+    "Falaw/Consultivo",
+    "Falaw/Outros",
+    "Falaw/Clientes/Outros Clientes",
+    "Falaw/Clientes/Apdata",
+    "Falaw/Clientes/Baymetrics",
+    "Falaw/Clientes/Bipa",
+    "Falaw/Clientes/Buser",
+    "Falaw/Clientes/Cuidar.me - Dr. Consulta",
+    "Falaw/Clientes/Digibee",
+    "Falaw/Clientes/Frete - CargoX",
+    "Falaw/Clientes/GFT",
+    "Falaw/Clientes/Grupo Dória",
+    "Falaw/Clientes/Gupy",
+    "Falaw/Clientes/Hubees",
+    "Falaw/Clientes/Ifood",
+    "Falaw/Clientes/KPG",
+    "Falaw/Clientes/Lemon",
+    "Falaw/Clientes/Musa",
+    "Falaw/Clientes/Nuvemshop",
+    "Falaw/Clientes/Peg&Pet",
+    "Falaw/Clientes/Pier",
+    "Falaw/Clientes/Inter",
+    "Falaw/Clientes/Pravaler",
+    "Falaw/Clientes/Quero",
+    "Falaw/Clientes/Rabbot",
+    "Falaw/Clientes/Safira",
+    "Falaw/Clientes/Solinftec",
+    "Falaw/Clientes",
+    "Falaw/Newslatter",  # typo antigo
+    # novos marcadores atuais (caso já existam e precisem ser removidos)
+    *TODOS_MARCADORES,
+    "Falaw",  # pai raiz
+]
+
 # ──────────────────────────────────────────────
 # LOGGING
 # ──────────────────────────────────────────────
@@ -226,6 +266,7 @@ def ler_email(service, msg_id: str) -> dict:
             "assunto": headers.get("Subject", "(sem assunto)"),
             "de": headers.get("From", ""),
             "para": headers.get("To", ""),
+            "cc": headers.get("Cc", ""),
             "data": headers.get("Date", ""),
             "corpo": body[:3000],  # limita para não estourar contexto
         }
@@ -234,19 +275,60 @@ def ler_email(service, msg_id: str) -> dict:
         return {}
 
 
+# Palavras-chave que indicam email de audiência
+_KW_AUDIENCIAS = [
+    "audiência", "audiencia", "pauta de audiência", "pauta de audiencia",
+    "designação de audiência", "designacao de audiencia",
+    "intimação para audiência", "intimacao para audiencia",
+    "ata de audiência", "ata de audiencia", "audiência una",
+    "audiencia una", "audiência inicial", "audiencia inicial",
+    "audiência de instrução", "audiencia de instrucao",
+    "adiamento de audiência", "adiamento de audiencia",
+    "conciliação", "conciliacao",
+]
+
+# Fragmentos de texto no assunto/corpo → endereço do grupo correspondente
+_TEXTO_PARA_GRUPO = {
+    "buser":        "buser-trabalhista@falaw.com.br",
+    "loft":         "loft-trabalhista@falaw.com.br",
+    "frete":        "frete-trabalhista@falaw.com.br",
+    "cargox":       "frete-trabalhista@falaw.com.br",
+    "ifood":        "ifood-trabalhista@falaw.com.br",
+    "indrive":      "indrive@falaw.com.br",
+    "interpag":     "interpag@falaw.com.br",
+    "pravaler":     "pravaler-trabalhista@falaw.com.br",
+    "sindical":     "sindical-fa@falaw.com.br",
+}
+
+
 # ──────────────────────────────────────────────
 # CLASSIFICAÇÃO POR GRUPO DESTINATÁRIO
 # ──────────────────────────────────────────────
 
-def classificar_email(email: dict) -> dict | None:
+def classificar_email(email: dict) -> str | None:
     """
-    Retorna o nome do marcador (label) a aplicar se o email foi enviado
-    para um dos endereços de grupo conhecidos, ou None caso contrário.
+    Retorna o nome do marcador (label) a aplicar, ou None.
+    Prioridade:
+      1. Endereço de grupo em To ou Cc
+      2. Email de audiência com cliente identificável pelo assunto/corpo
     """
-    para = email.get("para", "").lower()
+    destinatarios = (email.get("para", "") + " " + email.get("cc", "")).lower()
+
+    # 1. Verifica To + Cc para endereço de grupo
     for endereco, nome_marcador in GRUPOS.items():
-        if endereco in para:
+        if endereco in destinatarios:
             return nome_marcador
+
+    # 2. Email de audiência: tenta identificar o cliente pelo assunto/corpo
+    assunto = email.get("assunto", "").lower()
+    corpo = email.get("corpo", "")[:1000].lower()
+    texto = assunto + " " + corpo
+
+    if any(kw in texto for kw in _KW_AUDIENCIAS):
+        for fragmento, endereco_grupo in _TEXTO_PARA_GRUPO.items():
+            if fragmento in texto:
+                return GRUPOS.get(endereco_grupo)
+
     return None
 
 
@@ -361,13 +443,14 @@ def remover_todos_marcadores_usuario(user_email: str) -> dict:
     try:
         service = get_gmail_service(user_email)
 
-        # Obtém IDs de todos os marcadores que começam com "Falaw"
-        # (cobre tanto os atuais quanto os antigos que possam ter sobrado)
+        # Obtém IDs apenas dos marcadores que o código já criou (atuais + legados)
+        nomes_para_remover = set(MARCADORES_LEGADOS)
         result = service.users().labels().list(userId="me").execute()
-        falaw_label_ids = [
-            l["id"] for l in result.get("labels", [])
-            if l["name"].startswith("Falaw")
-        ]
+        labels_encontradas = {
+            l["name"]: l["id"] for l in result.get("labels", [])
+            if l["name"] in nomes_para_remover
+        }
+        falaw_label_ids = list(labels_encontradas.values())
 
         if not falaw_label_ids:
             log.info(f"  [{user_email}] Nenhum marcador Falaw encontrado.")
@@ -399,6 +482,19 @@ def remover_todos_marcadores_usuario(user_email: str) -> dict:
             page_token = res.get("nextPageToken")
             if not page_token:
                 break
+
+        # Exclui os próprios marcadores da conta
+        for label_id in falaw_label_ids:
+            try:
+                service.users().labels().delete(userId="me", id=label_id).execute()
+                log.info(f"  [{user_email}] Marcador excluído: {label_id}")
+            except HttpError as e:
+                if e.resp.status == 400:
+                    # Marcadores de sistema não podem ser excluídos — ignora
+                    pass
+                else:
+                    log.error(f"  Erro ao excluir marcador {label_id}: {e}")
+                    stats["erros"] += 1
 
     except HttpError as e:
         log.error(f"Erro HTTP para {user_email}: {e}")
