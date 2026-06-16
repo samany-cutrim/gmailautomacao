@@ -50,7 +50,7 @@ GRUPOS = {
     "interpag@falaw.com.br":             "Falaw/Interpag Trabalhista",
     "jurimetria@falaw.com.br":           "Falaw/Jurimetria",
     "lalamove@falaw.com.br":             "Falaw/Lalamove",
-    "newslatter@falaw.com.br":           "Falaw/Newslatter",
+    "newslatter@falaw.com.br":           "Falaw/Newsletter",
     "pravaler-trabalhista@falaw.com.br": "Falaw/Pravaler",
     "sindical-fa@falaw.com.br":          "Falaw/Sindical FA",
 }
@@ -361,19 +361,12 @@ def remover_todos_marcadores_usuario(user_email: str) -> dict:
     try:
         service = get_gmail_service(user_email)
 
-        # Monta o conjunto completo de nomes de marcadores criados pelo código
-        # (inclui os marcadores-pai, ex: "Falaw", "Falaw/Clientes")
-        nomes_criados = set()
-        for nome in TODOS_MARCADORES:
-            partes = nome.split("/")
-            for i in range(1, len(partes) + 1):
-                nomes_criados.add("/".join(partes[:i]))
-
-        # Obtém IDs apenas dos marcadores que constam na lista do código
+        # Obtém IDs de todos os marcadores que começam com "Falaw"
+        # (cobre tanto os atuais quanto os antigos que possam ter sobrado)
         result = service.users().labels().list(userId="me").execute()
         falaw_label_ids = [
             l["id"] for l in result.get("labels", [])
-            if l["name"] in nomes_criados
+            if l["name"].startswith("Falaw")
         ]
 
         if not falaw_label_ids:
