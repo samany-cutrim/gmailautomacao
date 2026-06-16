@@ -36,68 +36,30 @@ CONFIG = {
 # ESTRUTURA DE MARCADORES
 # ──────────────────────────────────────────────
 
-# Clientes que têm marcador próprio.
-# Para adicionar um novo cliente, basta incluir aqui:
-# "NomeDetectadoPelaIA": "Falaw/Clientes/NomeDoMarcador",
-# Obs: não use "/" no nome do marcador final — no Gmail, "/" cria subnível.
-CLIENTES_CONHECIDOS = {
-    "Apdata":       "Falaw/Clientes/Apdata",
-    "Baymetrics":   "Falaw/Clientes/Baymetrics",
-    "Bipa":         "Falaw/Clientes/Bipa",
-    "Buser":        "Falaw/Clientes/Buser",
-    "Cuidar.me":    "Falaw/Clientes/Cuidar.me - Dr. Consulta",
-    "Digibee":      "Falaw/Clientes/Digibee",
-    "CargoX":       "Falaw/Clientes/Frete - CargoX",
-    "GFT":          "Falaw/Clientes/GFT",
-    "Grupo Dória":  "Falaw/Clientes/Grupo Dória",
-    "Gupy":         "Falaw/Clientes/Gupy",
-    "Hubees":       "Falaw/Clientes/Hubees",
-    "Ifood":        "Falaw/Clientes/Ifood",
-    "KPG":          "Falaw/Clientes/KPG",
-    "Lemon":        "Falaw/Clientes/Lemon",
-    "Musa":         "Falaw/Clientes/Musa",
-    "Nuvemshop":    "Falaw/Clientes/Nuvemshop",
-    "Peg&Pet":      "Falaw/Clientes/Peg&Pet",
-    "Pier":         "Falaw/Clientes/Pier",
-    "Inter":        "Falaw/Clientes/Inter",
-    "Pravaler":     "Falaw/Clientes/Pravaler",
-    "Quero":        "Falaw/Clientes/Quero",
-    "Rabbot":       "Falaw/Clientes/Rabbot",
-    "Safira":       "Falaw/Clientes/Safira",
-    "Solinftec":    "Falaw/Clientes/Solinftec",
+# Mapeamento: endereço do grupo → nome do marcador no Gmail
+GRUPOS = {
+    "advogados@falaw.com.br":            "Falaw/Advogados Falaw",
+    "buser-trabalhista@falaw.com.br":    "Falaw/Buser Trabalhista",
+    "consultivo@falaw.com.br":           "Falaw/Consultivo Geral",
+    "loft-trabalhista@falaw.com.br":     "Falaw/Contencioso LOFT Trabalhista",
+    "controladoria@falaw.com.br":        "Falaw/Controladoria FALAW",
+    "fa--geral@falaw.com.br":            "Falaw/FA GERAL",
+    "frete-trabalhista@falaw.com.br":    "Falaw/Frete Trabalhista",
+    "ifood-trabalhista@falaw.com.br":    "Falaw/Ifood",
+    "indrive@falaw.com.br":              "Falaw/INDRIVE Litigation",
+    "interpag@falaw.com.br":             "Falaw/Interpag Trabalhista",
+    "jurimetria@falaw.com.br":           "Falaw/Jurimetria",
+    "lalamove@falaw.com.br":             "Falaw/Lalamove",
+    "newslatter@falaw.com.br":           "Falaw/Newslatter",
+    "pravaler-trabalhista@falaw.com.br": "Falaw/Pravaler",
+    "sindical-fa@falaw.com.br":          "Falaw/Sindical FA",
 }
 
-# Nomes alternativos que a IA pode encontrar → nome canônico da lista acima
-APELIDOS_CLIENTES = {
-    "Dr. Consulta": "Cuidar.me",
-    "Dr Consulta": "Cuidar.me",
-    "Frete": "CargoX",
-    "Banco Inter": "Inter",
-}
+# Usuário que NÃO deve receber marcadores automáticos
+USUARIO_EXCLUIDO = "tatiana@falaw.com.br"
 
-# Prefixos de email @falaw.com.br que pertencem a contas de clientes específicos
-# Ex: juridicobancointer@falaw.com.br → cliente Inter
-ALIAS_FALAW_CLIENTES = {
-    "juridicobancointer": "Inter",
-    "juridico.inter":     "Inter",
-    "juridicobuser":      "Buser",
-    "juridicoifood":      "Ifood",
-    "juridicogft":        "GFT",
-    "juridicogupy":       "Gupy",
-}
-
-MARCADORES = {
-    "Consultivo":      "Falaw/Consultivo",
-    "Audiencias":      "Falaw/Audiências",
-    "Propaganda":      "Falaw/Propaganda",
-    "Interno":         "Falaw/Interno",
-    "OutrosClientes":  "Falaw/Clientes/Outros Clientes",
-    "Outro":           "Falaw/Outros",
-    "URGENTE":         "Falaw/⚠️ URGENTE",
-}
-
-# Junta tudo para criação automática dos marcadores
-TODOS_MARCADORES = list(MARCADORES.values()) + list(CLIENTES_CONHECIDOS.values())
+# Lista de todos os marcadores a criar (inclui pais gerados em garantir_marcadores)
+TODOS_MARCADORES = list(GRUPOS.values())
 
 # ──────────────────────────────────────────────
 # LOGGING
@@ -219,11 +181,11 @@ def garantir_marcadores(service, user_email: str) -> dict:
 # LER EMAILS NÃO LIDOS RECENTES
 # ──────────────────────────────────────────────
 def buscar_emails_nao_lidos(service) -> list:
-    """Retorna emails não lidos das últimas X horas, sem marcador FA Law."""
+    """Retorna emails não lidos das últimas X horas, sem marcador Falaw/Grupos."""
     depois = datetime.now(timezone.utc) - timedelta(hours=CONFIG["HOURS_LOOKBACK"])
     timestamp = int(depois.timestamp())
 
-    query = f'is:unread after:{timestamp} -label:"Falaw"'
+    query = f'is:unread after:{timestamp} -label:"Falaw/Grupos"'
 
     try:
         result = service.users().messages().list(
@@ -273,356 +235,34 @@ def ler_email(service, msg_id: str) -> dict:
 
 
 # ──────────────────────────────────────────────
-# CLASSIFICAÇÃO POR REGRAS PYTHON (sem IA)
+# CLASSIFICAÇÃO POR GRUPO DESTINATÁRIO
 # ──────────────────────────────────────────────
 
-# Palavras-chave por categoria (assunto + corpo, case-insensitive)
-_KW_AUDIENCIAS = [
-    "audiência", "audiencia", "pauta de audiência", "pauta de audiencia",
-    "designação de audiência", "designacao de audiencia",
-    "intimação para audiência", "intimacao para audiencia",
-    "ata de audiência", "ata de audiencia", "audiência una",
-    "audiencia una", "audiência inicial", "audiencia inicial",
-    "audiência de instrução", "audiencia de instrucao",
-    "adiamento de audiência", "adiamento de audiencia",
-    "conciliação", "conciliacao",
-]
-
-_KW_CONSULTIVO = [
-    "parecer", "consulta jurídica", "consulta juridica",
-    "opinião jurídica", "opiniao juridica", "análise jurídica",
-    "analise juridica", "esclarecimento", "orientação jurídica",
-    "orientacao juridica", "dúvida jurídica", "duvida juridica",
-    "me informe", "gostaria de saber", "poderia me informar",
-    "preciso de orientação", "preciso de orientacao",
-    "consultivo",
-]
-
-_KW_PROPAGANDA = [
-    "unsubscribe", "descadastrar", "cancelar inscrição", "cancelar inscricao",
-    "newsletter", "email marketing", "e-mail marketing",
-    "oferta especial", "promoção exclusiva", "promocao exclusiva",
-    "webinar", "workshop", "evento gratuito", "evento pago",
-    "patrocinado", "publicidade",
-    "você foi selecionado", "voce foi selecionado",
-    "clique para descadastrar", "remover da lista",
-]
-
-_ASSUNTO_SISTEMA = [
-    "nova providência de pasta",
-    "nova providencia de pasta",
-    "notificação comentário projuris",
-    "notificacao comentario projuris",
-    "notificação tarefa evento projuris",
-    "notificacao tarefa evento projuris",
-    "confirmar a responsabilidadade da pasta",
-    "confirmar a responsabilidade da pasta",
-    "retirada de pastas sob sua responsabilidade",
-    "andamento processual",
-    "novo compromisso -",
-    "instabilidade temporária no canal",
-    "instabilidade temporaria no canal",
-]
-
-_KW_URGENTE = [
-    "urgente", "urgência", "urgencia", "prazo fatal", "penhora",
-    "bloqueio", "liminar", "tutela", "bacenjud", "renajud",
-    "citação", "citacao", "intimação com prazo", "intimacao com prazo",
-    "mandado", "multa", "execução", "execucao", "arresto",
-    "sequestro de bens", "leilão", "leilao", "hasta pública", "hasta publica",
-    "amanhã", "amanha", "hoje", "agora",
-]
-
-_DOMINIOS_CLIENTES = {
-    "juridicobancointer@falaw": "Inter",
-    "juridico.inter@falaw":     "Inter",
-    "apdata.com":       "Apdata",
-    "baymetrics.com":   "Baymetrics",
-    "bipa.com":         "Bipa",
-    "buser.com":        "Buser",
-    "cuidar.me":        "Cuidar.me",
-    "drconsulta":       "Cuidar.me",
-    "dr.consulta":      "Cuidar.me",
-    "digibee.com":      "Digibee",
-    "cargox.com":       "CargoX",
-    "gft.com":          "GFT",
-    "grupodoria.com":   "Grupo Dória",
-    "gupy.io":          "Gupy",
-    "hubees.com":       "Hubees",
-    "ifood.com":        "Ifood",
-    "kpg.com":          "KPG",
-    "lemon.energy":     "Lemon",
-    "musa.com":         "Musa",
-    "nuvemshop.com":    "Nuvemshop",
-    "pegepet.com":      "Peg&Pet",
-    "pier.digital":     "Pier",
-    "pier.finance":     "Pier",
-    "bancointer.com":   "Inter",
-    "inter.co":         "Inter",
-    "@inter.":          "Inter",
-    "pravaler.com":     "Pravaler",
-    "quero.com":        "Quero",
-    "quero.education":  "Quero",
-    "rabbot.com":       "Rabbot",
-    "safira.com":       "Safira",
-    "solinftec.com":    "Solinftec",
-}
-
-_TEXTO_CLIENTES_ASSUNTO = {
-    "apdata":        "Apdata",
-    "baymetrics":    "Baymetrics",
-    "bipa":          "Bipa",
-    "buser":         "Buser",
-    "cuidar.me":     "Cuidar.me",
-    "dr. consulta":  "Cuidar.me",
-    "dr consulta":   "Cuidar.me",
-    "digibee":       "Digibee",
-    "cargox":        "CargoX",
-    " gft ":         "GFT",
-    "grupo dória":   "Grupo Dória",
-    "grupo doria":   "Grupo Dória",
-    "gupy":          "Gupy",
-    "hubees":        "Hubees",
-    "ifood":         "Ifood",
-    " kpg ":         "KPG",
-    "lemon energy":  "Lemon",
-    " musa ":        "Musa",
-    "nuvemshop":     "Nuvemshop",
-    "peg&pet":       "Peg&Pet",
-    "peg e pet":     "Peg&Pet",
-    "pier.digital":  "Pier",
-    "banco inter":   "Inter",
-    "pravaler":      "Pravaler",
-    "quero edu":     "Quero",
-    "rabbot":        "Rabbot",
-    "safira":        "Safira",
-    "solinftec":     "Solinftec",
-}
-
-_TEXTO_CLIENTES_CORPO = {
-    "apdata":          "Apdata",
-    "baymetrics":      "Baymetrics",
-    "digibee":         "Digibee",
-    "cargox":          "CargoX",
-    "grupo dória":     "Grupo Dória",
-    "grupo doria":     "Grupo Dória",
-    "hubees":          "Hubees",
-    "ifood":           "Ifood",
-    "nuvemshop":       "Nuvemshop",
-    "peg&pet":         "Peg&Pet",
-    "banco inter":     "Inter",
-    "pravaler":        "Pravaler",
-    "solinftec":       "Solinftec",
-}
-
-_TEXTO_CLIENTES = _TEXTO_CLIENTES_ASSUNTO
-
-
-def _contem(texto: str, palavras: list) -> bool:
-    t = texto.lower()
-    return any(p in t for p in palavras)
-
-
-def _detectar_cliente_por_alias_falaw(de: str) -> str | None:
-    """Detecta clientes por alias @falaw.com.br (ex: juridicobancointer@falaw.com.br)."""
-    de_lower = de.lower()
-    for prefixo, cliente in ALIAS_FALAW_CLIENTES.items():
-        if prefixo in de_lower:
-            return cliente
+def classificar_email(email: dict) -> dict | None:
+    """
+    Retorna o nome do marcador (label) a aplicar se o email foi enviado
+    para um dos endereços de grupo conhecidos, ou None caso contrário.
+    """
+    para = email.get("para", "").lower()
+    for endereco, nome_marcador in GRUPOS.items():
+        if endereco in para:
+            return nome_marcador
     return None
-
-
-def _detectar_cliente(de: str, assunto: str, corpo: str) -> str | None:
-    """Retorna o nome canônico do cliente detectado, ou None."""
-    # 1. Verifica alias @falaw.com.br de contas de clientes
-    cliente = _detectar_cliente_por_alias_falaw(de)
-    if cliente:
-        return cliente
-
-    # 2. Verifica assunto (termos curtos permitidos aqui)
-    assunto_lower = assunto.lower()
-    for fragmento, nome in _TEXTO_CLIENTES_ASSUNTO.items():
-        if fragmento in assunto_lower:
-            return nome
-
-    # 3. Verifica corpo (apenas termos inequívocos)
-    corpo_lower = corpo[:1000].lower()
-    for fragmento, nome in _TEXTO_CLIENTES_CORPO.items():
-        if fragmento in corpo_lower:
-            return nome
-
-    return None
-
-
-def classificar_email(email: dict) -> dict:
-    """Classifica o email usando regras Python puras (sem IA)."""
-    de = email.get("de", "")
-    para = email.get("para", "")
-    assunto = email.get("assunto", "")
-    corpo = email.get("corpo", "")
-    texto_completo = assunto + " " + corpo
-    assunto_lower = assunto.lower()
-
-    # ── 0. E-MAILS DE SISTEMA ───────────────────────────────
-    if any(assunto_lower.startswith(p) or p in assunto_lower for p in _ASSUNTO_SISTEMA):
-        urgente = _contem(texto_completo, _KW_URGENTE)
-        return {
-            "categoria": "Interno",
-            "urgente": urgente,
-            "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
-            "cliente": None,
-            "resumo": assunto[:120],
-        }
-
-    # ── 0b. NEWSLETTER INTERNA ───────────────────────────────
-    if "newsletter" in assunto_lower or "informativo |" in assunto_lower:
-        return {
-            "categoria": "Propaganda",
-            "urgente": False,
-            "motivo_urgencia": None,
-            "cliente": None,
-            "resumo": assunto[:120],
-        }
-
-    # ── 1. ALIAS DE CLIENTE @falaw.com.br ───────────
-    cliente_alias = _detectar_cliente_por_alias_falaw(de)
-    if cliente_alias:
-        urgente = _contem(texto_completo, _KW_URGENTE)
-        return {
-            "categoria": "Cliente",
-            "urgente": urgente,
-            "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
-            "cliente": cliente_alias,
-            "resumo": assunto[:120],
-        }
-
-    # ── 2. INTERNO ──────────────────────────────────
-    de_interno = "@falaw.com.br" in de.lower()
-    para_interno = "@falaw.com.br" in para.lower()
-    if de_interno and para_interno:
-        if "consultivo" in assunto.lower():
-            cliente = _detectar_cliente(de, assunto, corpo)
-            urgente = _contem(texto_completo, _KW_URGENTE)
-            return {
-                "categoria": "Consultivo",
-                "urgente": urgente,
-                "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
-                "cliente": cliente,
-                "resumo": assunto[:120],
-            }
-        categoria = "Interno"
-        cliente = _detectar_cliente(de, assunto, corpo)
-        urgente = _contem(texto_completo, _KW_URGENTE)
-        return {
-            "categoria": categoria,
-            "urgente": urgente,
-            "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
-            "cliente": cliente,
-            "resumo": assunto[:120],
-        }
-
-    # ── 3. AUDIÊNCIAS ───────────────────────────────
-    if _contem(texto_completo, _KW_AUDIENCIAS):
-        cliente = _detectar_cliente(de, assunto, corpo)
-        urgente = _contem(texto_completo, _KW_URGENTE)
-        return {
-            "categoria": "Audiencias",
-            "urgente": urgente,
-            "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
-            "cliente": cliente,
-            "resumo": assunto[:120],
-        }
-
-    # ── 4. CLIENTE CONHECIDO ────────────────────────
-    cliente = _detectar_cliente(de, assunto, corpo)
-    if cliente:
-        urgente = _contem(texto_completo, _KW_URGENTE)
-        if not de_interno and _contem(texto_completo, _KW_CONSULTIVO):
-            return {
-                "categoria": "Consultivo",
-                "urgente": urgente,
-                "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
-                "cliente": cliente,
-                "resumo": assunto[:120],
-            }
-        return {
-            "categoria": "Cliente",
-            "urgente": urgente,
-            "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
-            "cliente": cliente,
-            "resumo": assunto[:120],
-        }
-
-    # ── 5. CONSULTIVO (sem cliente identificado) ────
-    if not de_interno and _contem(texto_completo, _KW_CONSULTIVO):
-        urgente = _contem(texto_completo, _KW_URGENTE)
-        return {
-            "categoria": "Consultivo",
-            "urgente": urgente,
-            "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
-            "cliente": None,
-            "resumo": assunto[:120],
-        }
-
-    # ── 6. PROPAGANDA ───────────────────────────────
-    if _contem(texto_completo, _KW_PROPAGANDA):
-        return {
-            "categoria": "Propaganda",
-            "urgente": False,
-            "motivo_urgencia": None,
-            "cliente": None,
-            "resumo": assunto[:120],
-        }
-
-    # ── 7. OUTRO ────────────────────────────────────
-    urgente = _contem(texto_completo, _KW_URGENTE)
-    return {
-        "categoria": "Outro",
-        "urgente": urgente,
-        "motivo_urgencia": "detectado por palavras-chave" if urgente else None,
-        "cliente": None,
-        "resumo": assunto[:120],
-    }
 
 
 # ──────────────────────────────────────────────
 # APLICAR MARCADORES NO EMAIL
 # ──────────────────────────────────────────────
-def aplicar_marcadores(service, msg_id: str, classificacao: dict, label_ids: dict):
-    """Aplica marcadores e estrela ao email conforme classificação."""
+def aplicar_marcadores(service, msg_id: str, nome_marcador: str, label_ids: dict):
+    """Aplica o marcador do grupo ao email."""
     try:
-        categoria = classificacao.get("categoria", "Outro")
-        urgente = classificacao.get("urgente", False)
-        cliente = classificacao.get("cliente")
-
-        # Resolve apelidos (ex: "Dr. Consulta" → "Cuidar.me")
-        if cliente in APELIDOS_CLIENTES:
-            cliente = APELIDOS_CLIENTES[cliente]
-
-        # Resolve o marcador conforme a categoria
-        if categoria == "Cliente" and cliente in CLIENTES_CONHECIDOS:
-            nome_marcador = CLIENTES_CONHECIDOS[cliente]
-        elif categoria == "Cliente":
-            nome_marcador = MARCADORES["OutrosClientes"]
-        else:
-            nome_marcador = MARCADORES.get(categoria, MARCADORES["Outro"])
-
-        labels_para_adicionar = []
-
-        if nome_marcador in label_ids:
-            labels_para_adicionar.append(label_ids[nome_marcador])
-
-        if urgente and MARCADORES["URGENTE"] in label_ids:
-            labels_para_adicionar.append(label_ids[MARCADORES["URGENTE"]])
-            labels_para_adicionar.append("STARRED")
-
-        if labels_para_adicionar:
+        label_id = label_ids.get(nome_marcador)
+        if label_id:
             service.users().messages().modify(
                 userId="me",
                 id=msg_id,
-                body={"addLabelIds": labels_para_adicionar}
+                body={"addLabelIds": [label_id]},
             ).execute()
-
     except Exception as e:
         log.error(f"Erro ao aplicar marcadores no email {msg_id}: {e}")
 
@@ -632,8 +272,13 @@ def aplicar_marcadores(service, msg_id: str, classificacao: dict, label_ids: dic
 # ──────────────────────────────────────────────
 def processar_usuario(user_email: str) -> dict:
     """Processa os emails de um usuário. Retorna estatísticas."""
+    stats = {"usuario": user_email, "processados": 0, "ignorados": 0, "erros": 0}
+
+    if user_email.lower() == USUARIO_EXCLUIDO.lower():
+        log.info(f"Ignorando {user_email} (usuário excluído da automação).")
+        return stats
+
     log.info(f"Processando: {user_email}")
-    stats = {"usuario": user_email, "processados": 0, "urgentes": 0, "erros": 0}
 
     try:
         service = get_gmail_service(user_email)
@@ -652,19 +297,18 @@ def processar_usuario(user_email: str) -> dict:
                 stats["erros"] += 1
                 continue
 
-            classificacao = classificar_email(email)
-            aplicar_marcadores(service, msg_ref["id"], classificacao, label_ids)
-            stats["processados"] += 1
-
-            status = "🚨 URGENTE" if classificacao.get("urgente") else "✅ OK"
-            log.info(
-                f"  [{status}] {email.get('assunto', '')[:60]} "
-                f"→ {classificacao.get('categoria')} "
-                f"| {classificacao.get('resumo', '')[:80]}"
-            )
-
-            if classificacao.get("urgente"):
-                stats["urgentes"] += 1
+            nome_marcador = classificar_email(email)
+            if nome_marcador:
+                aplicar_marcadores(service, msg_ref["id"], nome_marcador, label_ids)
+                stats["processados"] += 1
+                log.info(
+                    f"  ✅ {email.get('assunto', '')[:60]} → {nome_marcador}"
+                )
+            else:
+                stats["ignorados"] += 1
+                log.info(
+                    f"  — sem grupo: {email.get('assunto', '')[:60]}"
+                )
 
     except HttpError as e:
         log.error(f"Erro HTTP para {user_email}: {e}")
@@ -698,12 +342,11 @@ def executar() -> dict:
         "duracao_segundos": (datetime.now() - inicio).total_seconds(),
         "usuarios_processados": len(usuarios),
         "total_emails": sum(r["processados"] for r in resultados),
-        "total_urgentes": sum(r["urgentes"] for r in resultados),
         "total_erros": sum(r["erros"] for r in resultados),
         "detalhes": resultados,
     }
 
-    log.info(f"Concluído: {resumo['total_emails']} emails, {resumo['total_urgentes']} urgentes.")
+    log.info(f"Concluído: {resumo['total_emails']} emails marcados.")
     return resumo
 
 
