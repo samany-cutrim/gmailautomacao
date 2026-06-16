@@ -103,7 +103,7 @@ PALAVRAS_CHAVE_GRUPOS = {
     ],
     # Cliente Interpag (pagamentos)
     "Falaw/Interpag Trabalhista": [
-        "interpag",
+        "interpag", "inter pag",
     ],
     # Área de jurimetria e análise de dados jurídicos
     "Falaw/Jurimetria": [
