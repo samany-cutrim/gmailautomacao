@@ -61,6 +61,75 @@ USUARIO_EXCLUIDO = "tatiana@falaw.com.br"
 # Lista de todos os marcadores a criar (inclui pais gerados em garantir_marcadores)
 TODOS_MARCADORES = list(GRUPOS.values())
 
+# Palavras-chave por marcador — usadas para classificar emails quando o grupo
+# não aparece no To/Cc. Adicione ou remova palavras conforme necessário.
+PALAVRAS_CHAVE_GRUPOS = {
+    # Comunicações internas da equipe de advogados
+    "Falaw/Advogados Falaw": [
+        "advogados falaw", "falaw advogados", "equipe falaw",
+    ],
+    # Cliente Buser (transporte de passageiros)
+    "Falaw/Buser Trabalhista": [
+        "buser",
+    ],
+    # Pareceres e consultas jurídicas gerais
+    "Falaw/Consultivo Geral": [
+        "consultivo", "parecer jurídico", "parecer juridico",
+        "consulta jurídica", "consulta juridica", "consultivo geral",
+    ],
+    # Cliente LOFT (fintech imobiliária)
+    "Falaw/Contencioso LOFT Trabalhista": [
+        "loft",
+    ],
+    # Financeiro e controladoria interna da Falaw
+    "Falaw/Controladoria FALAW": [
+        "controladoria", "controladoria falaw",
+    ],
+    # Assuntos gerais da FA (usar com cuidado — termos podem ser amplos)
+    "Falaw/FA GERAL": [
+        "fa geral", "falaw geral",
+    ],
+    # Cliente Frete/CargoX (logística)
+    "Falaw/Frete Trabalhista": [
+        "frete", "cargox", "cargo x",
+    ],
+    # Cliente iFood (delivery de comida)
+    "Falaw/Ifood": [
+        "ifood", "i-food",
+    ],
+    # Cliente InDrive (transporte por aplicativo)
+    "Falaw/INDRIVE Litigation": [
+        "indrive", "in drive", "indriver",
+    ],
+    # Cliente Interpag (pagamentos)
+    "Falaw/Interpag Trabalhista": [
+        "interpag",
+    ],
+    # Área de jurimetria e análise de dados jurídicos
+    "Falaw/Jurimetria": [
+        "jurimetria",
+    ],
+    # Cliente Lalamove (logística/entregas)
+    "Falaw/Lalamove": [
+        "lalamove", "lala move",
+    ],
+    # Newsletter/informativos enviados pelo escritório
+    "Falaw/Newsletter": [
+        "newsletter", "newslatter", "boletim informativo", "informativo falaw",
+    ],
+    # Cliente Pravaler (crédito educacional)
+    "Falaw/Pravaler": [
+        "pravaler",
+    ],
+    # Área sindical e negociações coletivas
+    "Falaw/Sindical FA": [
+        "sindical", "sindicato", "acordo coletivo",
+        "convenção coletiva", "convencao coletiva",
+        "negociação coletiva", "negociacao coletiva",
+        "dissídio coletivo", "dissidio coletivo",
+    ],
+}
+
 # Marcadores criados por versões anteriores do código (para limpeza completa)
 MARCADORES_LEGADOS = [
     "Falaw/⚠️ URGENTE",
@@ -276,34 +345,8 @@ def ler_email(service, msg_id: str) -> dict:
         return {}
 
 
-# Palavras-chave que indicam email de audiência
-_KW_AUDIENCIAS = [
-    "audiência", "audiencia", "pauta de audiência", "pauta de audiencia",
-    "designação de audiência", "designacao de audiencia",
-    "intimação para audiência", "intimacao para audiencia",
-    "ata de audiência", "ata de audiencia", "audiência una",
-    "audiencia una", "audiência inicial", "audiencia inicial",
-    "audiência de instrução", "audiencia de instrucao",
-    "adiamento de audiência", "adiamento de audiencia",
-    "conciliação", "conciliacao",
-]
-
-# Fragmentos de texto no assunto/corpo → endereço do grupo correspondente
-_TEXTO_PARA_GRUPO = {
-    "buser":        "buser-trabalhista@falaw.com.br",
-    "loft":         "loft-trabalhista@falaw.com.br",
-    "frete":        "frete-trabalhista@falaw.com.br",
-    "cargox":       "frete-trabalhista@falaw.com.br",
-    "ifood":        "ifood-trabalhista@falaw.com.br",
-    "indrive":      "indrive@falaw.com.br",
-    "interpag":     "interpag@falaw.com.br",
-    "pravaler":     "pravaler-trabalhista@falaw.com.br",
-    "sindical":     "sindical-fa@falaw.com.br",
-}
-
-
 # ──────────────────────────────────────────────
-# CLASSIFICAÇÃO POR GRUPO DESTINATÁRIO
+# CLASSIFICAÇÃO POR GRUPO DESTINATÁRIO / PALAVRAS-CHAVE
 # ──────────────────────────────────────────────
 
 def classificar_email(email: dict) -> str | None:
@@ -311,7 +354,7 @@ def classificar_email(email: dict) -> str | None:
     Retorna o nome do marcador (label) a aplicar, ou None.
     Prioridade:
       1. Endereço de grupo em To ou Cc
-      2. Email de audiência com cliente identificável pelo assunto/corpo
+      2. Palavras-chave de PALAVRAS_CHAVE_GRUPOS no assunto ou corpo
     """
     destinatarios = (email.get("para", "") + " " + email.get("cc", "")).lower()
 
@@ -320,15 +363,14 @@ def classificar_email(email: dict) -> str | None:
         if endereco in destinatarios:
             return nome_marcador
 
-    # 2. Email de audiência: tenta identificar o cliente pelo assunto/corpo
+    # 2. Palavras-chave no assunto/corpo
     assunto = email.get("assunto", "").lower()
     corpo = email.get("corpo", "")[:1000].lower()
     texto = assunto + " " + corpo
 
-    if any(kw in texto for kw in _KW_AUDIENCIAS):
-        for fragmento, endereco_grupo in _TEXTO_PARA_GRUPO.items():
-            if fragmento in texto:
-                return GRUPOS.get(endereco_grupo)
+    for nome_marcador, palavras in PALAVRAS_CHAVE_GRUPOS.items():
+        if palavras and any(palavra in texto for palavra in palavras):
+            return nome_marcador
 
     return None
 
