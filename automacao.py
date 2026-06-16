@@ -436,64 +436,65 @@ def executar() -> dict:
 # REMOVER TODOS OS MARCADORES DE TODOS OS EMAILS
 # ──────────────────────────────────────────────
 def remover_todos_marcadores_usuario(user_email: str) -> dict:
-    """Remove todos os marcadores Falaw de todos os emails de um usuário."""
+    """Remove todos os marcadores do código dos emails e os exclui da conta."""
     log.info(f"Removendo marcadores de: {user_email}")
     stats = {"usuario": user_email, "emails_modificados": 0, "erros": 0}
 
     try:
         service = get_gmail_service(user_email)
 
-        # Obtém IDs apenas dos marcadores que o código já criou (atuais + legados)
+        # Obtém IDs apenas dos marcadores que o código criou (atuais + legados)
         nomes_para_remover = set(MARCADORES_LEGADOS)
         result = service.users().labels().list(userId="me").execute()
         labels_encontradas = {
             l["name"]: l["id"] for l in result.get("labels", [])
             if l["name"] in nomes_para_remover
         }
-        falaw_label_ids = list(labels_encontradas.values())
 
-        if not falaw_label_ids:
-            log.info(f"  [{user_email}] Nenhum marcador Falaw encontrado.")
+        if not labels_encontradas:
+            log.info(f"  [{user_email}] Nenhum marcador do código encontrado.")
             return stats
 
-        log.info(f"  [{user_email}] {len(falaw_label_ids)} marcador(es) Falaw encontrado(s).")
+        log.info(f"  [{user_email}] {len(labels_encontradas)} marcador(es) encontrado(s): {list(labels_encontradas.keys())}")
 
-        # Busca todos os emails que possuem pelo menos um desses marcadores
-        page_token = None
-        while True:
-            kwargs = {"userId": "me", "labelIds": falaw_label_ids, "maxResults": 500}
-            if page_token:
-                kwargs["pageToken"] = page_token
-            res = service.users().messages().list(**kwargs).execute()
-            msgs = res.get("messages", [])
+        # Para cada marcador individualmente: remove dos emails e depois exclui
+        for nome, label_id in labels_encontradas.items():
+            # 1. Remove o marcador de todos os emails que o possuem
+            page_token = None
+            while True:
+                kwargs = {"userId": "me", "labelIds": [label_id], "maxResults": 500}
+                if page_token:
+                    kwargs["pageToken"] = page_token
+                res = service.users().messages().list(**kwargs).execute()
+                msgs = res.get("messages", [])
 
-            for msg_ref in msgs:
-                try:
-                    service.users().messages().modify(
-                        userId="me",
-                        id=msg_ref["id"],
-                        body={"removeLabelIds": falaw_label_ids},
-                    ).execute()
-                    stats["emails_modificados"] += 1
-                except Exception as e:
-                    log.error(f"  Erro ao modificar email {msg_ref['id']}: {e}")
-                    stats["erros"] += 1
+                if msgs:
+                    # Batch: remove de todos de uma vez
+                    for msg_ref in msgs:
+                        try:
+                            service.users().messages().modify(
+                                userId="me",
+                                id=msg_ref["id"],
+                                body={"removeLabelIds": [label_id]},
+                            ).execute()
+                            stats["emails_modificados"] += 1
+                        except Exception as e:
+                            log.error(f"  Erro ao modificar email {msg_ref['id']}: {e}")
+                            stats["erros"] += 1
 
-            page_token = res.get("nextPageToken")
-            if not page_token:
-                break
+                page_token = res.get("nextPageToken")
+                if not page_token:
+                    break
 
-        # Exclui os próprios marcadores da conta
-        for label_id in falaw_label_ids:
+            # 2. Exclui o marcador da conta
             try:
                 service.users().labels().delete(userId="me", id=label_id).execute()
-                log.info(f"  [{user_email}] Marcador excluído: {label_id}")
+                log.info(f"  [{user_email}] Marcador excluído: {nome}")
             except HttpError as e:
                 if e.resp.status == 400:
-                    # Marcadores de sistema não podem ser excluídos — ignora
-                    pass
+                    pass  # marcadores de sistema não podem ser excluídos
                 else:
-                    log.error(f"  Erro ao excluir marcador {label_id}: {e}")
+                    log.error(f"  Erro ao excluir marcador '{nome}': {e}")
                     stats["erros"] += 1
 
     except HttpError as e:
